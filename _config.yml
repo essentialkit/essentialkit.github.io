@@ -41,8 +41,11 @@ collections:
   extensions:
     output: true
 
+url: "https://essentialkit.org" # For jekyll-sitemap
+
 plugins:
   - jekyll-feed
   - jekyll-seo-tag
+  - jekyll-sitemap
 
 google_analytics: G-K0JH8L4JRX
