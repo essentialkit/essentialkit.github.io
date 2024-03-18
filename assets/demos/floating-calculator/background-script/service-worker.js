@@ -6,6 +6,298 @@ var IS_DEV_BUILD=true;
       __defProp(target, name, { get: all[name], enumerable: true });
   };
 
+  // src/config.ts
+  var packageName = "floating-calculator";
+  var applicationId = packageName + "/" + chrome?.i18n?.getMessage("@@extension_id");
+  var sentryDsn = "https://11fa19323b3a48d5882f26d3a98c1864@o526305.ingest.sentry.io/4504743091699712";
+  var measurementId = "G-ZCZLZLYH36";
+  var gaApiSecret = "UIXmDH2iRxaZPMd1S_UUww";
+  var configOptions = [
+    {
+      id: "default-width",
+      type: "range",
+      title: "optionDefaultWidth",
+      description: "optionDefaultWidthDesc",
+      default_value: 40,
+      min: "20",
+      max: "90"
+    },
+    {
+      id: "default-height",
+      type: "range",
+      title: "optionDefaultHeight",
+      description: "optionDefaultHeightDesc",
+      default_value: 70,
+      min: "20",
+      max: "95"
+    },
+    {
+      id: "blocked-sites",
+      type: "textarea",
+      title: "optionBlockedSites",
+      description: "optionBlockedSitesDesc",
+      default_value: ""
+    },
+    {
+      id: "enable-fractions",
+      type: "switch",
+      title: "optionEnableFractions",
+      description: "optionEnableFractionsDesc",
+      default_value: false
+    },
+    {
+      id: "answer-precision",
+      type: "range",
+      title: "optionAnswerPrecision",
+      description: "optionAnswerPrecisionDesc",
+      default_value: 6,
+      min: "1",
+      max: "10"
+    },
+    {
+      id: "default-to-basic",
+      type: "switch",
+      title: "optionDefaultToBasic",
+      description: "optionDefaultToBasicDesc",
+      default_value: false
+    },
+    {
+      id: "enable-minimize",
+      type: "switch",
+      title: "optionEnableMinimize",
+      description: "optionEnableMinimizeDesc",
+      default_value: false
+    },
+    {
+      id: "enable-dark-mode",
+      type: "switch",
+      title: "optionEnableDarkMode",
+      description: "optionEnableDarkModeDesc",
+      default_value: false
+    },
+    {
+      id: "use-comma-decimals",
+      type: "switch",
+      title: "optionUseCommaForDecimals",
+      description: "optionUseCommaForDecimalsDesc",
+      default_value: false
+    }
+  ];
+  var contextMenus = [
+    {
+      menu: {
+        id: "popup-calculator",
+        title: "Open as Popup Window",
+        visible: true,
+        contexts: ["action"]
+      },
+      handler: (data) => {
+        chrome.windows.create(
+          {
+            url: `chrome-extension://${chrome.i18n.getMessage(
+              "@@extension_id"
+            )}/standalone/calc.html`,
+            type: "popup",
+            width: 440,
+            height: 360
+          },
+          function(window2) {
+          }
+        );
+      }
+    },
+    {
+      menu: {
+        id: "newtab-calculator",
+        title: "Open as New Tab",
+        visible: true,
+        contexts: ["action"]
+      },
+      handler: (data) => {
+        chrome.tabs.create(
+          {
+            url: `chrome-extension://${chrome.i18n.getMessage(
+              "@@extension_id"
+            )}/standalone/calc.html`,
+            active: true
+          },
+          () => {
+          }
+        );
+      }
+    }
+  ];
+
+  // src/utils/session-id.ts
+  var SESSION_EXPIRATION_IN_MIN = 30;
+  async function getOrCreateSessionId() {
+    let { sessionData } = await chrome.storage.session.get("sessionData");
+    const currentTimeInMs = Date.now();
+    if (sessionData && sessionData.timestamp) {
+      const durationInMin = (currentTimeInMs - sessionData.timestamp) / 6e4;
+      if (durationInMin > SESSION_EXPIRATION_IN_MIN) {
+        sessionData = null;
+      } else {
+        sessionData.timestamp = currentTimeInMs;
+        await chrome.storage.session.set({ sessionData });
+      }
+    }
+    if (!sessionData) {
+      sessionData = {
+        session_id: currentTimeInMs.toString(),
+        timestamp: currentTimeInMs.toString()
+      };
+      await chrome.storage.session.set({ sessionData });
+    }
+    return sessionData.session_id;
+  }
+
+  // src/utils/analytics.ts
+  var GA_ENDPOINT = "https://www.google-analytics.com/mp/collect";
+  var GA_DEBUG_ENDPOINT = "https://www.google-analytics.com/debug/mp/collect";
+  var MEASUREMENT_ID = measurementId;
+  var API_SECRET = gaApiSecret;
+  var DEFAULT_ENGAGEMENT_TIME_MSEC = 100;
+  var Analytics = class {
+    constructor() {
+      this.debug = IS_DEV_BUILD;
+    }
+    async getOrCreateClientId() {
+      let { clientId } = await chrome.storage.local.get("clientId");
+      if (!clientId) {
+        clientId = self.crypto.randomUUID();
+        await chrome.storage.local.set({ clientId });
+      }
+      return clientId;
+    }
+    async getSessionId() {
+      try {
+        return getOrCreateSessionId();
+      } catch (e) {
+        return new Promise((resolve) => {
+          chrome.runtime.sendMessage("get_or_create_session_id", (sessionId) => {
+            resolve(sessionId);
+          });
+        });
+      }
+    }
+    async fireEvent(name, params = {}) {
+      if (!params.session_id) {
+        params.session_id = await this.getSessionId();
+      }
+      if (!params.engagement_time_msec) {
+        params.engagement_time_msec = DEFAULT_ENGAGEMENT_TIME_MSEC;
+      }
+      try {
+        const response = await fetch(
+          `${this.debug ? GA_DEBUG_ENDPOINT : GA_ENDPOINT}?measurement_id=${MEASUREMENT_ID}&api_secret=${API_SECRET}`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              client_id: await this.getOrCreateClientId(),
+              events: [
+                {
+                  name,
+                  params
+                }
+              ]
+            })
+          }
+        );
+        if (!this.debug) {
+          return;
+        }
+        console.log(await response.text());
+      } catch (e) {
+        console.error("Google Analytics request failed with an exception", e);
+      }
+    }
+    async firePageViewEvent(pageTitle, pageLocation, additionalParams = {}) {
+      return this.fireEvent("page_view", {
+        page_title: pageTitle,
+        page_location: pageLocation,
+        ...additionalParams
+      });
+    }
+    async fireErrorEvent(error, additionalParams = {}) {
+      return this.fireEvent("extension_error", {
+        ...error,
+        ...additionalParams
+      });
+    }
+  };
+  var analytics_default = new Analytics();
+
+  // src/utils/storage.ts
+  var FEEDBACK_DATA_KEY = "feedback_data";
+  var INSTALL_TIME_MS = "install_time_ms";
+  var SUCCESSFUL_INTERACTIONS = "successful_interactions";
+  var Storage = class {
+    constructor() {
+      this.storageService = chrome?.storage?.sync ?? window.localStorage;
+    }
+    put(key, value) {
+      if (value === null || value === void 0) {
+        return Promise.reject("Attempting to save a null value");
+      }
+      if (!key) {
+        return Promise.reject("Attempting to use a null key");
+      }
+      if (!chrome?.storage?.sync) {
+        return this.storageService.setItem(key, JSON.stringify(value));
+      }
+      const data = {};
+      data[key] = value;
+      return this.storageService.set(data);
+    }
+    async get(key) {
+      if (!chrome?.storage?.sync) {
+        return JSON.parse(this.storageService.getItem(key));
+      }
+      const response = await this.storageService.get(key);
+      return response[key];
+    }
+    async getConfig(key) {
+      return await this.get(key) ?? configOptions.find((c) => c.id === key)?.default_value;
+    }
+    getAll() {
+      return this.storageService.get(null);
+    }
+    async getAndUpdate(key, updateFn) {
+      const data = await this.get(key);
+      return this.put(key, await updateFn(data));
+    }
+    async isCurrentSiteBlocked() {
+      const blockedSites = await this.get("blocked-sites");
+      if (blockedSites && window.location.hostname && blockedSites.includes(window.location.hostname)) {
+        return true;
+      }
+      return false;
+    }
+  };
+  var storage_default = new Storage();
+
+  // src/background-script/post-install.ts
+  var uninstallUrl = "https://forms.gle/iE1DgamFFEy2g2fDA";
+  var welcomeUrl = chrome.runtime.getURL("welcome/welcome.html");
+  var onInstalled = (details) => {
+    storage_default.put(INSTALL_TIME_MS, Date.now());
+    if (details.reason === "install") {
+      analytics_default.fireEvent("install");
+      chrome.tabs.create({
+        url: welcomeUrl,
+        active: true
+      });
+    }
+    chrome.runtime.setUninstallURL(uninstallUrl, () => {
+      analytics_default.fireEvent("uninstall");
+      if (chrome.runtime.lastError) {
+        console.error("Error setting uninstall URL", chrome.runtime.lastError);
+      }
+    });
+  };
+  chrome.runtime.onInstalled.addListener(onInstalled);
+
   // node_modules/@sentry/utils/esm/is.js
   var objectToString = Object.prototype.toString;
   function isError(wat) {
@@ -69,11 +361,11 @@ var IS_DEV_BUILD=true;
   }
 
   // node_modules/@sentry/utils/esm/string.js
-  function truncate(str, max2 = 0) {
-    if (typeof str !== "string" || max2 === 0) {
+  function truncate(str, max = 0) {
+    if (typeof str !== "string" || max === 0) {
       return str;
     }
-    return str.length <= max2 ? str : `${str.slice(0, max2)}...`;
+    return str.length <= max ? str : `${str.slice(0, max)}...`;
   }
   function safeJoin(input, delimiter) {
     if (!Array.isArray(input)) {
@@ -321,7 +613,7 @@ var IS_DEV_BUILD=true;
   }
   function makeLogger() {
     let enabled = false;
-    const logger3 = {
+    const logger2 = {
       enable: () => {
         enabled = true;
       },
@@ -331,7 +623,7 @@ var IS_DEV_BUILD=true;
     };
     if (typeof __SENTRY_DEBUG__ === "undefined" || __SENTRY_DEBUG__) {
       CONSOLE_LEVELS.forEach((name) => {
-        logger3[name] = (...args) => {
+        logger2[name] = (...args) => {
           if (enabled) {
             consoleSandbox(() => {
               GLOBAL_OBJ.console[name](`${PREFIX}[${name}]:`, ...args);
@@ -341,10 +633,10 @@ var IS_DEV_BUILD=true;
       });
     } else {
       CONSOLE_LEVELS.forEach((name) => {
-        logger3[name] = () => void 0;
+        logger2[name] = () => void 0;
       });
     }
-    return logger3;
+    return logger2;
   }
   var logger = makeLogger();
 
@@ -1693,10 +1985,10 @@ ${JSON.stringify(itemHeaders)}
   function concatBuffers(buffers) {
     const totalLength = buffers.reduce((acc, buf) => acc + buf.length, 0);
     const merged = new Uint8Array(totalLength);
-    let offset2 = 0;
+    let offset = 0;
     for (const buffer of buffers) {
-      merged.set(buffer, offset2);
-      offset2 += buffer.length;
+      merged.set(buffer, offset);
+      offset += buffer.length;
     }
     return merged;
   }
@@ -4555,7 +4847,7 @@ Url: ${_getEventFilterUrl(event)}`
     if (!startTimestamp || !endTimestamp || !sentryXhrData) {
       return;
     }
-    const { method, url, status_code, body: body2 } = sentryXhrData;
+    const { method, url, status_code, body } = sentryXhrData;
     const data = {
       method,
       url,
@@ -4563,7 +4855,7 @@ Url: ${_getEventFilterUrl(event)}`
     };
     const hint = {
       xhr: handlerData.xhr,
-      input: body2,
+      input: body,
       startTimestamp,
       endTimestamp
     };
@@ -5014,84 +5306,6 @@ Url: ${_getEventFilterUrl(event)}`
     }
   };
 
-  // src/config.ts
-  var packageName = "floating-calculator";
-  var applicationId = packageName + "/" + chrome?.i18n?.getMessage("@@extension_id");
-  var sentryDsn = "https://11fa19323b3a48d5882f26d3a98c1864@o526305.ingest.sentry.io/4504743091699712";
-  var measurementId = "G-ZCZLZLYH36";
-  var gaApiSecret = "UIXmDH2iRxaZPMd1S_UUww";
-  var configOptions = [
-    {
-      id: "default-width",
-      type: "range",
-      title: "optionDefaultWidth",
-      description: "optionDefaultWidthDesc",
-      default_value: 40,
-      min: "20",
-      max: "90"
-    },
-    {
-      id: "default-height",
-      type: "range",
-      title: "optionDefaultHeight",
-      description: "optionDefaultHeightDesc",
-      default_value: 70,
-      min: "20",
-      max: "95"
-    },
-    {
-      id: "blocked-sites",
-      type: "textarea",
-      title: "optionBlockedSites",
-      description: "optionBlockedSitesDesc",
-      default_value: ""
-    },
-    {
-      id: "enable-fractions",
-      type: "switch",
-      title: "optionEnableFractions",
-      description: "optionEnableFractionsDesc",
-      default_value: false
-    },
-    {
-      id: "answer-precision",
-      type: "range",
-      title: "optionAnswerPrecision",
-      description: "optionAnswerPrecisionDesc",
-      default_value: 6,
-      min: "1",
-      max: "10"
-    },
-    {
-      id: "default-to-basic",
-      type: "switch",
-      title: "optionDefaultToBasic",
-      description: "optionDefaultToBasicDesc",
-      default_value: false
-    },
-    {
-      id: "enable-minimize",
-      type: "switch",
-      title: "optionEnableMinimize",
-      description: "optionEnableMinimizeDesc",
-      default_value: false
-    },
-    {
-      id: "enable-dark-mode",
-      type: "switch",
-      title: "optionEnableDarkMode",
-      description: "optionEnableDarkModeDesc",
-      default_value: false
-    },
-    {
-      id: "use-comma-decimals",
-      type: "switch",
-      title: "optionUseCommaForDecimals",
-      description: "optionUseCommaForDecimalsDesc",
-      default_value: false
-    }
-  ];
-
   // src/utils/logger.ts
   var EXTENSION_NAME = packageName;
   var Logger = class {
@@ -5167,3681 +5381,316 @@ Url: ${_getEventFilterUrl(event)}`
       }
     }
   };
-
-  // src/utils/storage.ts
-  var FEEDBACK_DATA_KEY = "feedback_data";
-  var Storage = class {
-    constructor() {
-      this.storageService = chrome?.storage?.sync ?? window.localStorage;
+  var RemoteLogger = class {
+    constructor(tag) {
+      this.tag = "";
+      this.debug = (...messages) => this.internalLog(3 /* DEBUG */, ...messages);
+      this.log = (...messages) => this.internalLog(2 /* INFO */, ...messages);
+      this.warn = (...messages) => this.internalLog(1 /* WARNING */, ...messages);
+      this.error = (...messages) => this.internalLog(0 /* ERROR */, ...messages);
+      this.tag = EXTENSION_NAME + "." + (typeof tag === "string" ? tag : tag.constructor.name);
     }
-    put(key, value) {
-      if (value === null || value === void 0) {
-        return Promise.reject("Attempting to save a null value");
-      }
-      if (!key) {
-        return Promise.reject("Attempting to use a null key");
-      }
-      if (!chrome?.storage?.sync) {
-        return this.storageService.setItem(key, JSON.stringify(value));
-      }
-      const data = {};
-      data[key] = value;
-      return this.storageService.set(data);
-    }
-    async get(key) {
-      if (!chrome?.storage?.sync) {
-        return JSON.parse(this.storageService.getItem(key));
-      }
-      const response = await this.storageService.get(key);
-      return response[key];
-    }
-    async getConfig(key) {
-      return await this.get(key) ?? configOptions.find((c) => c.id === key)?.default_value;
-    }
-    getAll() {
-      return this.storageService.get(null);
-    }
-    async getAndUpdate(key, updateFn) {
-      const data = await this.get(key);
-      return this.put(key, await updateFn(data));
-    }
-    async isCurrentSiteBlocked() {
-      const blockedSites = await this.get("blocked-sites");
-      if (blockedSites && window.location.hostname && blockedSites.includes(window.location.hostname)) {
-        return true;
-      }
-      return false;
-    }
-  };
-  var storage_default = new Storage();
-
-  // src/utils/winbox/template.js
-  var template = document.createElement("div");
-  template.innerHTML = '<div class=wb-header><div class=wb-control><span title="Minimize" class=wb-min></span><span title="Maximize" class=wb-max></span><span title="Fullscreen" class=wb-full></span><span title="Close" class=wb-close></span></div><div class=wb-drag><div class=wb-icon></div><div class=wb-title></div></div></div><div class=wb-body></div><div class=wb-footer><feedback-form size="inline"></feedback-form></div><div class=wb-n></div><div class=wb-s></div><div class=wb-w></div><div class=wb-e></div><div class=wb-nw></div><div class=wb-ne></div><div class=wb-se></div><div class=wb-sw></div>';
-  function markup(tpl) {
-    return (tpl || template).cloneNode(true);
-  }
-  var winboxcss = `
-  .winbox {
-    position: fixed;
-    left: 0;
-    top: 0;
-    background: #0050ff;
-    box-shadow: 0 14px 28px rgba(0, 0, 0, 0.25), 0 10px 10px rgba(0, 0, 0, 0.22);
-    /* using transform make contents blur when applied and requires more gpu memory */
-    transition: width 0.3s, height 0.3s, left 0.3s, top 0.3s;
-    transition-timing-function: cubic-bezier(0.3, 1, 0.3, 1);
-    /* contain "strict" does not make overflow contents selectable */
-    contain: layout size;
-    /* explicitly set text align to left fixes an issue with iframes alignment when centered */
-    text-align: left;
-    /* workaround for using passive listeners */
-    touch-action: none;
-  }
-  .wb-header {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 100%;
-    height: 35px;
-    line-height: 35px;
-    color: #fff;
-    overflow: hidden;
-    z-index: 1;
-  }
-  .wb-body {
-    position: absolute;
-    top: 35px;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    overflow: auto;
-    -webkit-overflow-scrolling: touch;
-    overflow-scrolling: touch;
-    will-change: contents;
-    background: #fff;
-    /* when no border is set there is some thin line visible */
-    /* always hide top border visually */
-    margin-top: 0 !important;
-    contain: strict;
-    z-index: 0;
-  }
-  .wb-footer {
-    position: absolute;
-    bottom: 0;
-    width: 100%;
-    display: none;
-  }
-  .winbox.show-footer .wb-body {
-    bottom: 35px; /* height of footer */
-  }
-  .winbox.show-footer .wb-footer {
-    display: block;
-  }
-  body > .wb-body {
-    position: relative;
-    display: inline-block;
-    visibility: hidden;
-    contain: none;
-  }
-  .wb-drag {
-    height: 100%;
-    padding-left: 10px;
-    cursor: move;
-  }
-  .wb-title {
-    font-family: Arial, sans-serif;
-    font-size: 14px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .wb-icon {
-    display: none;
-    width: 20px;
-    height: 100%;
-    margin: -1px 8px 0 -3px;
-    float: left;
-    background-repeat: no-repeat;
-    background-size: 100%;
-    background-position: center;
-  }
-  .wb-n {
-    position: absolute;
-    top: -5px;
-    left: 0;
-    right: 0;
-    height: 10px;
-    cursor: n-resize;
-    z-index: 2;
-  }
-  .wb-e {
-    position: absolute;
-    top: 0;
-    right: -5px;
-    bottom: 0;
-    width: 10px;
-    cursor: w-resize;
-    z-index: 2;
-  }
-  .wb-s {
-    position: absolute;
-    bottom: -5px;
-    left: 0;
-    right: 0;
-    height: 10px;
-    cursor: n-resize;
-    z-index: 2;
-  }
-  .wb-w {
-    position: absolute;
-    top: 0;
-    left: -5px;
-    bottom: 0;
-    width: 10px;
-    cursor: w-resize;
-    z-index: 2;
-  }
-  .wb-nw {
-    position: absolute;
-    top: -5px;
-    left: -5px;
-    width: 15px;
-    height: 15px;
-    cursor: nw-resize;
-    z-index: 2;
-  }
-  .wb-ne {
-    position: absolute;
-    top: -5px;
-    right: -5px;
-    width: 15px;
-    height: 15px;
-    cursor: ne-resize;
-    z-index: 2;
-  }
-  .wb-sw {
-    position: absolute;
-    bottom: -5px;
-    left: -5px;
-    width: 15px;
-    height: 15px;
-    cursor: ne-resize;
-    z-index: 2;
-  }
-  .wb-se {
-    position: absolute;
-    bottom: -5px;
-    right: -5px;
-    width: 15px;
-    height: 15px;
-    cursor: nw-resize;
-    z-index: 2;
-  }
-  .wb-control {
-    float: right;
-    height: 100%;
-    max-width: 100%;
-    text-align: center;
-  }
-  .wb-control * {
-    display: inline-block;
-    width: 30px;
-    height: 100%;
-    max-width: 100%;
-    background-position: center;
-    background-repeat: no-repeat;
-    cursor: pointer;
-  }
-  .wb-min {
-    background-image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxNiAyIj48cGF0aCBmaWxsPSIjZmZmIiBkPSJNOCAwaDdhMSAxIDAgMCAxIDAgMkgxYTEgMSAwIDAgMSAwLTJoN3oiLz48L3N2Zz4=);
-    background-size: 14px auto;
-    background-position: center calc(50% + 6px);
-  }
-  .wb-max {
-    background-image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIGZpbGw9IiNmZmYiIHZpZXdCb3g9IjAgMCA5NiA5NiI+PHBhdGggZD0iTTIwIDcxLjMxMUMxNS4zNCA2OS42NyAxMiA2NS4yMyAxMiA2MFYyMGMwLTYuNjMgNS4zNy0xMiAxMi0xMmg0MGM1LjIzIDAgOS42NyAzLjM0IDExLjMxMSA4SDI0Yy0yLjIxIDAtNCAxLjc5LTQgNHY1MS4zMTF6Ii8+PHBhdGggZD0iTTkyIDc2VjM2YzAtNi42My01LjM3LTEyLTEyLTEySDQwYy02LjYzIDAtMTIgNS4zNy0xMiAxMnY0MGMwIDYuNjMgNS4zNyAxMiAxMiAxMmg0MGM2LjYzIDAgMTItNS4zNyAxMi0xMnptLTUyIDRjLTIuMjEgMC00LTEuNzktNC00VjM2YzAtMi4yMSAxLjc5LTQgNC00aDQwYzIuMjEgMCA0IDEuNzkgNCA0djQwYzAgMi4yMS0xLjc5IDQtNCA0SDQweiIvPjwvc3ZnPg==);
-    background-size: 17px auto;
-  }
-  .wb-close {
-    background-image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9Ii0xIC0xIDE4IDE4Ij48cGF0aCBmaWxsPSIjZmZmIiBkPSJtMS42MTMuMjEuMDk0LjA4M0w4IDYuNTg1IDE0LjI5My4yOTNsLjA5NC0uMDgzYTEgMSAwIDAgMSAxLjQwMyAxLjQwM2wtLjA4My4wOTRMOS40MTUgOGw2LjI5MiA2LjI5M2ExIDEgMCAwIDEtMS4zMiAxLjQ5N2wtLjA5NC0uMDgzTDggOS40MTVsLTYuMjkzIDYuMjkyLS4wOTQuMDgzQTEgMSAwIDAgMSAuMjEgMTQuMzg3bC4wODMtLjA5NEw2LjU4NSA4IC4yOTMgMS43MDdBMSAxIDAgMCAxIDEuNjEzLjIxeiIvPjwvc3ZnPg==);
-    background-size: 15px auto;
-    background-position: 5px center;
-  }
-  .wb-full {
-    background-image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2Utd2lkdGg9IjIuNSIgdmlld0JveD0iMCAwIDI0IDI0Ij48cGF0aCBkPSJNOCAzSDVhMiAyIDAgMCAwLTIgMnYzbTE4IDBWNWEyIDIgMCAwIDAtMi0yaC0zbTAgMThoM2EyIDIgMCAwIDAgMi0ydi0zTTMgMTZ2M2EyIDIgMCAwIDAgMiAyaDMiLz48L3N2Zz4=);
-    background-size: 16px auto;
-  }
-  /*
-  .winbox:not(.max) .wb-max {
-    background-image: url(@restore);
-    background-size: 20px auto;
-    background-position: center bottom 5px;
-  }
-  */
-  /*
-  .winbox:fullscreen{
-    transition: none !important;
-  }
-  .winbox:fullscreen .wb-full{
-    background-image: url(@minimize);
-  }
-  .winbox:fullscreen > div,
-  .winbox:fullscreen .wb-title,
-  */
-  .winbox.modal .wb-body ~ div,
-  .winbox.modal .wb-drag,
-  .winbox.min .wb-body ~ div,
-  .winbox.max .wb-body ~ div {
-    pointer-events: none;
-  }
-  .winbox.max .wb-drag {
-    cursor: default;
-  }
-  .winbox.min .wb-full,
-  .winbox.min .wb-min {
-    display: none;
-  }
-  .winbox.min .wb-drag {
-    cursor: default;
-  }
-  .winbox.min .wb-body > * {
-    display: none;
-  }
-  .winbox.hide {
-    display: none;
-  }
-  .winbox.max {
-    box-shadow: none;
-  }
-  .winbox.max .wb-body {
-    margin: 0 !important;
-  }
-  .winbox iframe {
-    position: absolute;
-    width: 100%;
-    height: 100%;
-    border: 0;
-  }
-  body.wb-lock .winbox {
-    will-change: left, top, width, height;
-    transition: none;
-  }
-  body.wb-lock iframe {
-    pointer-events: none;
-  }
-  .winbox.modal:before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: inherit;
-    border-radius: inherit;
-  }
-  .winbox.modal:after {
-    content: '';
-    position: absolute;
-    top: -50vh;
-    left: -50vw;
-    right: -50vw;
-    bottom: -50vh;
-    background: #0d1117;
-    animation: wb-fade-in 0.2s ease-out forwards;
-    z-index: -1;
-  }
-  .winbox.modal .wb-min,
-  .winbox.modal .wb-max,
-  .winbox.modal .wb-full {
-    display: none;
-  }
-  @keyframes wb-fade-in {
-    0% {
-      opacity: 0;
-    }
-    100% {
-      opacity: 0.85;
-    }
-  }
-  .no-animation {
-    transition: none;
-  }
-  .no-shadow {
-    box-shadow: none;
-  }
-  .no-header .wb-header {
-    display: none;
-  }
-  .no-header .wb-body {
-    top: 0;
-  }
-  .no-min .wb-min {
-    display: none;
-  }
-  .no-max .wb-max {
-    display: none;
-  }
-  .no-full .wb-full {
-    display: none;
-  }
-  .no-close .wb-close {
-    display: none;
-  }
-  .no-resize .wb-body ~ div {
-    display: none;
-  }
-  .no-move:not(.min) .wb-title {
-    pointer-events: none;
-  }
-  .wb-body .wb-hide {
-    display: none;
-  }
-  .wb-show {
-    display: none;
-  }
-  .wb-body .wb-show {
-    display: revert;
-  }
-`;
-
-  // src/utils/winbox/helper.js
-  function addListener(node, event, fn, opt) {
-    node && node.addEventListener(event, fn, opt || false);
-  }
-  function removeListener(node, event, fn, opt) {
-    node && node.removeEventListener(event, fn, opt || false);
-  }
-  function preventEvent(event, prevent) {
-    event.stopPropagation();
-    event.cancelable && event.preventDefault();
-  }
-  function getByClass(root, name) {
-    return root.getElementsByClassName(name)[0];
-  }
-  function addClass(node, classname) {
-    node.classList.add(classname);
-  }
-  function hasClass(node, classname) {
-    return node.classList.contains(classname);
-  }
-  function removeClass(node, classname) {
-    node.classList.remove(classname);
-  }
-  function setStyle(node, style, value) {
-    value = "" + value;
-    if (node["_s_" + style] !== value) {
-      node.style.setProperty(style, value);
-      node["_s_" + style] = value;
-    }
-  }
-  function setText(node, value) {
-    const textnode = node.firstChild;
-    textnode ? textnode.nodeValue = value : node.textContent = value;
-  }
-
-  // src/utils/winbox/winbox.js
-  var use_raf = false;
-  var stack_min = [];
-  var eventOptions = { capture: true, passive: true };
-  var body;
-  var id_counter = 0;
-  var index_counter = 10;
-  var is_fullscreen;
-  var last_focus;
-  var prefix_request;
-  var prefix_exit;
-  var root_w;
-  var root_h;
-  var WinBox = class {
-    constructor(params, _title) {
-      if (!(this instanceof WinBox)) {
-        return new WinBox(params);
-      }
-      body || setup();
-      let id, index, root, tpl, title, icon, mount, html, url, shadowel, shadowdom, framename, cssurl, width, height, minwidth, minheight, maxwidth, maxheight, autosize, x, y, top, left, bottom, right, min2, max2, hidden, modal, background, border, header, classname, oncreate, onclose, onfocus, onblur, onmove, onresize, onfullscreen, onmaximize, onminimize, onrestore, onhide, onshow, onload;
-      if (params) {
-        if (_title) {
-          title = params;
-          params = _title;
-        }
-        if (typeof params === "string") {
-          title = params;
-        } else {
-          id = params["id"];
-          index = params["index"];
-          root = params["root"];
-          tpl = params["template"];
-          title = title || params["title"];
-          icon = params["icon"];
-          mount = params["mount"];
-          html = params["html"];
-          url = params["url"];
-          shadowel = params["shadowel"];
-          framename = params["framename"];
-          cssurl = params["cssurl"];
-          width = params["width"];
-          height = params["height"];
-          minwidth = params["minwidth"];
-          minheight = params["minheight"];
-          maxwidth = params["maxwidth"];
-          maxheight = params["maxheight"];
-          autosize = params["autosize"];
-          min2 = params["min"];
-          max2 = params["max"];
-          hidden = params["hidden"];
-          modal = params["modal"];
-          x = params["x"] || (modal ? "center" : 0);
-          y = params["y"] || (modal ? "center" : 0);
-          top = params["top"];
-          left = params["left"];
-          bottom = params["bottom"];
-          right = params["right"];
-          background = params["background"];
-          border = params["border"];
-          header = params["header"];
-          classname = params["class"];
-          onclose = params["onclose"];
-          onfocus = params["onfocus"];
-          onblur = params["onblur"];
-          onmove = params["onmove"];
-          onresize = params["onresize"];
-          onfullscreen = params["onfullscreen"];
-          onmaximize = params["onmaximize"];
-          onminimize = params["onminimize"];
-          onrestore = params["onrestore"];
-          onhide = params["onhide"];
-          onshow = params["onshow"];
-          onload = params["onload"];
-        }
-      }
-      this.dom = markup(tpl);
-      this.dom.id = this.id = id || "winbox-" + ++id_counter;
-      this.dom.className = "winbox" + (classname ? " " + (typeof classname === "string" ? classname : classname.join(" ")) : "") + (modal ? " modal" : "");
-      this.dom["winbox"] = this;
-      this.window = this.dom;
-      this.body = getByClass(this.dom, "wb-body");
-      this.header = header || 35;
-      if (index || index === 0) {
-        index_counter = index;
-      }
-      if (background) {
-        this.setBackground(background);
-      }
-      if (border) {
-        setStyle(this.body, "margin", border + (isNaN(border) ? "" : "px"));
-      } else {
-        border = 0;
-      }
-      if (header) {
-        const node = getByClass(this.dom, "wb-header");
-        setStyle(node, "height", header + "px");
-        setStyle(node, "line-height", header + "px");
-        setStyle(this.body, "top", header + "px");
-      }
-      if (title) {
-        this.setTitle(title);
-      }
-      if (icon) {
-        this.setIcon(icon);
-      }
-      if (mount) {
-        this.mount(mount);
-      } else if (html) {
-        this.body.innerHTML = html;
-      } else if (url) {
-        this.setUrl(url, onload);
-      }
-      top = top ? parse(top, root_h) : 0;
-      bottom = bottom ? parse(bottom, root_h) : 0;
-      left = left ? parse(left, root_w) : 0;
-      right = right ? parse(right, root_w) : 0;
-      const viewport_w = root_w - left - right;
-      const viewport_h = root_h - top - bottom;
-      maxwidth = maxwidth ? parse(maxwidth, viewport_w) : viewport_w;
-      maxheight = maxheight ? parse(maxheight, viewport_h) : viewport_h;
-      minwidth = minwidth ? parse(minwidth, maxwidth) : 150;
-      minheight = minheight ? parse(minheight, maxheight) : this.header;
-      if (autosize) {
-        (root || body).appendChild(this.body);
-        width = Math.max(
-          Math.min(this.body.clientWidth + border * 2 + 1, maxwidth),
-          minwidth
-        );
-        height = Math.max(
-          Math.min(this.body.clientHeight + this.header + border + 1, maxheight),
-          minheight
-        );
-        this.dom.appendChild(this.body);
-      } else {
-        width = width ? parse(width, maxwidth) : Math.max(maxwidth / 2, minwidth) | 0;
-        height = height ? parse(height, maxheight) : Math.max(maxheight / 2, minheight) | 0;
-      }
-      x = x ? parse(x, viewport_w, width) : left;
-      y = y ? parse(y, viewport_h, height) : top;
-      this.x = x;
-      this.y = y;
-      this.width = width;
-      this.height = height;
-      this.minwidth = minwidth;
-      this.minheight = minheight;
-      this.maxwidth = maxwidth;
-      this.maxheight = maxheight;
-      this.top = top;
-      this.right = right;
-      this.bottom = bottom;
-      this.left = left;
-      this.index = index;
-      this.min = false;
-      this.max = false;
-      this.full = false;
-      this.hidden = false;
-      this.focused = false;
-      this.onclose = onclose;
-      this.onfocus = onfocus;
-      this.onblur = onblur;
-      this.onmove = onmove;
-      this.onresize = onresize;
-      this.onfullscreen = onfullscreen;
-      this.onmaximize = onmaximize;
-      this.onminimize = onminimize;
-      this.onrestore = onrestore;
-      this.onhide = onhide;
-      this.onshow = onshow;
-      if (max2) {
-        this.maximize();
-      } else if (min2) {
-        this.minimize();
-      } else {
-        this.resize().move();
-      }
-      if (hidden) {
-        this.hide();
-      } else {
-        this.focus();
-        if (index || index === 0) {
-          this.index = index;
-          if (index > index_counter)
-            index_counter = index;
-        }
-      }
-      setStyle(this.shadowdom ? this.shadowdom : this.dom, "z-index", index);
-      register(this);
-      if (shadowel) {
-        const se = document.createElement(shadowel);
-        se.style.position = "absolute";
-        const style = document.createElement("style");
-        style.textContent = winboxcss;
-        se.appendChild(style);
-        if (cssurl) {
-          const link = document.createElement("link");
-          link.rel = "stylesheet";
-          link.type = "text/css";
-          link.href = cssurl;
-          link.itemprop = "url";
-          se.appendChild(link);
-        }
-        se.appendChild(this.dom);
-        se.attachShadow({ mode: "open" }).innerHTML = "<slot></slot>";
-        this.shadowdom = se;
-        (root || body).appendChild(se);
-      } else {
-        (root || body).appendChild(this.dom);
-      }
-      (oncreate = params["oncreate"]) && oncreate.call(this, params);
-    }
-    static new(params) {
-      return new WinBox(params);
-    }
-    mount(src) {
-      this.unmount();
-      src._backstore || (src._backstore = src.parentNode);
-      this.body.textContent = "";
-      this.body.appendChild(src);
-      return this;
-    }
-    unmount(dest) {
-      const node = this.body.firstChild;
-      if (node) {
-        const root = dest || node._backstore;
-        root && root.appendChild(node);
-        node._backstore = dest;
-      }
-      return this;
-    }
-    setTitle(title) {
-      const node = getByClass(this.dom, "wb-title");
-      setText(node, this.title = title);
-      return this;
-    }
-    setIcon(src) {
-      const img = getByClass(this.dom, "wb-icon");
-      setStyle(img, "background-image", "url(" + src + ")");
-      setStyle(img, "display", "inline-block");
-      return this;
-    }
-    setBackground(background) {
-      setStyle(this.dom, "background", background);
-      return this;
-    }
-    setUrl(url, onload) {
-      const node = this.body.firstChild;
-      if (node && node.tagName.toLowerCase() === "iframe") {
-        node.src = url;
-      } else {
-        const name = this.framename ?? "";
-        this.body.innerHTML = `<iframe name="${name}" src="${url}"></iframe>`;
-        onload && (this.body.firstChild.onload = onload);
-      }
-      return this;
-    }
-    focus(state) {
-      if (state === false) {
-        return this.blur();
-      }
-      if (last_focus !== this && this.dom) {
-        last_focus && last_focus.blur();
-        setStyle(
-          this.shadowdom ? this.shadowdom : this.dom,
-          "z-index",
-          ++index_counter
-        );
-        this.index = index_counter;
-        this.addClass("focus");
-        last_focus = this;
-        this.focused = true;
-        this.onfocus && this.onfocus();
-      }
-      return this;
-    }
-    blur(state) {
-      if (state === false) {
-        return this.focus();
-      }
-      if (last_focus === this) {
-        this.removeClass("focus");
-        this.focused = false;
-        this.onblur && this.onblur();
-        last_focus = null;
-      }
-      return this;
-    }
-    hide(state) {
-      if (state === false) {
-        return this.show();
-      }
-      if (!this.hidden) {
-        this.onhide && this.onhide();
-        this.hidden = true;
-        return this.addClass("hide");
-      }
-    }
-    show(state) {
-      if (state === false) {
-        return this.hide();
-      }
-      if (this.hidden) {
-        this.onshow && this.onshow();
-        this.hidden = false;
-        return this.removeClass("hide");
-      }
-    }
-    minimize(state) {
-      if (state === false) {
-        return this.restore();
-      }
-      if (is_fullscreen) {
-        cancel_fullscreen();
-      }
-      if (this.max) {
-        this.removeClass("max");
-        this.max = false;
-      }
-      if (!this.min) {
-        stack_min.push(this);
-        update_min_stack();
-        this.dom.title = this.title;
-        this.addClass("min");
-        this.min = true;
-        this.onminimize && this.onminimize();
-      }
-      return this;
-    }
-    restore() {
-      if (is_fullscreen) {
-        cancel_fullscreen();
-      }
-      if (this.min) {
-        remove_min_stack(this);
-        this.resize().move();
-        this.onrestore && this.onrestore();
-      }
-      if (this.max) {
-        this.max = false;
-        this.removeClass("max").resize().move();
-        this.onrestore && this.onrestore();
-      }
-      return this;
-    }
-    maximize(state) {
-      if (state === false) {
-        return this.restore();
-      }
-      if (is_fullscreen) {
-        cancel_fullscreen();
-      }
-      if (this.min) {
-        remove_min_stack(this);
-      }
-      if (!this.max) {
-        this.addClass("max").resize(
-          root_w - this.left - this.right,
-          root_h - this.top - this.bottom,
-          true
-        ).move(this.left, this.top, true);
-        this.max = true;
-        this.onmaximize && this.onmaximize();
-      }
-      return this;
-    }
-    fullscreen(state) {
-      if (this.min) {
-        remove_min_stack(this);
-        this.resize().move();
-      }
-      if (!is_fullscreen || !cancel_fullscreen()) {
-        this.body[prefix_request]();
-        is_fullscreen = this;
-        this.full = true;
-        this.onfullscreen && this.onfullscreen();
-      } else if (state === false) {
-        return this.restore();
-      }
-      return this;
-    }
-    close(force) {
-      if (this.onclose && this.onclose(force)) {
-        return true;
-      }
-      if (this.min) {
-        remove_min_stack(this);
-      }
-      this.unmount();
-      this.dom.remove();
-      this.dom.textContent = "";
-      this.dom["winbox"] = null;
-      this.body = null;
-      this.dom = null;
-      if (last_focus === this) {
-        last_focus = null;
-      }
-    }
-    move(x, y, _skip_update) {
-      if (!x && x !== 0) {
-        x = this.x;
-        y = this.y;
-      } else if (!_skip_update) {
-        this.x = x ? x = parse(x, root_w - this.left - this.right, this.width) : 0;
-        this.y = y ? y = parse(y, root_h - this.top - this.bottom, this.height) : 0;
-      }
-      setStyle(this.dom, "left", x + "px");
-      setStyle(this.dom, "top", y + "px");
-      this.onmove && this.onmove(x, y);
-      return this;
-    }
-    resize(w, h, _skip_update) {
-      if (!w && w !== 0) {
-        w = this.width;
-        h = this.height;
-      } else if (!_skip_update) {
-        this.width = w ? w = parse(w, this.maxwidth) : 0;
-        this.height = h ? h = parse(h, this.maxheight) : 0;
-        w = Math.max(w, this.minwidth);
-        h = Math.max(h, this.minheight);
-      }
-      setStyle(this.dom, "width", w + "px");
-      setStyle(this.dom, "height", h + "px");
-      this.onresize && this.onresize(w, h);
-      return this;
-    }
-    addControl(control) {
-      const classname = control["class"];
-      const image = control.image;
-      const click = control.click;
-      const index = control.index;
-      const title = control.title;
-      const node = document.createElement("span");
-      const icons = getByClass(this.dom, "wb-control");
-      const self2 = this;
-      if (classname)
-        node.className = classname;
-      if (image)
-        setStyle(node, "background-image", "url(" + image + ")");
-      if (click)
-        node.onclick = function(event) {
-          click.call(this, event, self2);
-        };
-      if (title)
-        node.title = title;
-      icons.insertBefore(node, icons.childNodes[index || 0]);
-      return this;
-    }
-    removeControl(control) {
-      control = getByClass(this.dom, control);
-      control && control.remove();
-      return this;
-    }
-    addClass(classname) {
-      addClass(this.dom, classname);
-      return this;
-    }
-    removeClass(classname) {
-      removeClass(this.dom, classname);
-      return this;
-    }
-    hasClass(classname) {
-      return hasClass(this.dom, classname);
-    }
-    toggleClass(classname) {
-      return this.hasClass(classname) ? this.removeClass(classname) : this.addClass(classname);
-    }
-  };
-  function parse(num, base, center) {
-    if (typeof num === "string") {
-      if (num === "center") {
-        num = (base - center) / 2 | 0;
-      } else if (num === "right" || num === "bottom") {
-        num = base - center;
-      } else {
-        const value = parseFloat(num);
-        const unit = "" + value !== num && num.substring(("" + value).length);
-        if (unit === "%") {
-          num = base / 100 * value | 0;
-        } else {
-          num = value;
-        }
-      }
-    }
-    return num;
-  }
-  function setup() {
-    body = document.body;
-    body[prefix_request = "requestFullscreen"] || body[prefix_request = "msRequestFullscreen"] || body[prefix_request = "webkitRequestFullscreen"] || body[prefix_request = "mozRequestFullscreen"] || (prefix_request = "");
-    prefix_exit = prefix_request && prefix_request.replace("request", "exit").replace("mozRequest", "mozCancel").replace("Request", "Exit");
-    addListener(window, "resize", function() {
-      init2();
-      update_min_stack();
-    });
-    init2();
-  }
-  function register(self2) {
-    addWindowListener(self2, "drag");
-    addWindowListener(self2, "n");
-    addWindowListener(self2, "s");
-    addWindowListener(self2, "w");
-    addWindowListener(self2, "e");
-    addWindowListener(self2, "nw");
-    addWindowListener(self2, "ne");
-    addWindowListener(self2, "se");
-    addWindowListener(self2, "sw");
-    addListener(getByClass(self2.dom, "wb-min"), "click", function(event) {
-      preventEvent(event);
-      self2.min ? self2.focus().restore() : self2.blur().minimize();
-    });
-    addListener(getByClass(self2.dom, "wb-max"), "click", function(event) {
-      self2.max ? self2.restore() : self2.maximize();
-    });
-    if (prefix_request) {
-      addListener(getByClass(self2.dom, "wb-full"), "click", function(event) {
-        self2.fullscreen();
-      });
-    } else {
-      self2.addClass("no-full");
-    }
-    addListener(getByClass(self2.dom, "wb-close"), "click", function(event) {
-      preventEvent(event);
-      self2.close() || (self2 = null);
-    });
-    addListener(self2.dom, "click", function(event) {
-      self2.focus();
-    });
-  }
-  function remove_min_stack(self2) {
-    stack_min.splice(stack_min.indexOf(self2), 1);
-    update_min_stack();
-    self2.removeClass("min");
-    self2.min = false;
-    self2.dom.title = "";
-  }
-  function update_min_stack() {
-    const length = stack_min.length;
-    const splitscreen_index = {};
-    const splitscreen_length = {};
-    for (let i = 0, self2, key; i < length; i++) {
-      self2 = stack_min[i];
-      key = (self2.left || self2.right) + ":" + (self2.top || self2.bottom);
-      if (splitscreen_length[key]) {
-        splitscreen_length[key]++;
-      } else {
-        splitscreen_index[key] = 0;
-        splitscreen_length[key] = 1;
-      }
-    }
-    for (let i = 0, self2, key, width; i < length; i++) {
-      self2 = stack_min[i];
-      key = (self2.left || self2.right) + ":" + (self2.top || self2.bottom);
-      width = Math.min(
-        (root_w - self2.left - self2.right) / splitscreen_length[key],
-        250
-      );
-      self2.resize(width + 1 | 0, self2.header, true).move(
-        self2.left + splitscreen_index[key] * width | 0,
-        root_h - self2.bottom - self2.header,
-        true
-      );
-      splitscreen_index[key]++;
-    }
-  }
-  function addWindowListener(self2, dir) {
-    const node = getByClass(self2.dom, "wb-" + dir);
-    if (!node)
-      return;
-    let touch, x, y;
-    let raf_timer, raf_move, raf_resize;
-    let dblclick_timer = 0;
-    addListener(node, "mousedown", mousedown);
-    addListener(node, "touchstart", mousedown, eventOptions);
-    function loop() {
-      raf_timer = requestAnimationFrame(loop);
-      if (raf_resize) {
-        self2.resize();
-        raf_resize = false;
-      }
-      if (raf_move) {
-        self2.move();
-        raf_move = false;
-      }
-    }
-    function mousedown(event) {
-      preventEvent(event);
-      self2.focus();
-      if (dir === "drag") {
-        if (self2.min) {
-          self2.restore();
+    internalLog(level, ...messages) {
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (tabs.length !== 1) {
           return;
         }
-        const now = Date.now();
-        const diff = now - dblclick_timer;
-        dblclick_timer = now;
-        if (diff < 300 && !self2.dom.classList.contains("no-max")) {
-          self2.max ? self2.restore() : self2.maximize();
-          return;
-        }
-      }
-      if (!self2.max && !self2.min) {
-        addClass(body, "wb-lock");
-        use_raf && loop();
-        if ((touch = event.touches) && (touch = touch[0])) {
-          event = touch;
-          addListener(window, "touchmove", handler_mousemove, eventOptions);
-          addListener(window, "touchend", handler_mouseup, eventOptions);
-        } else {
-          addListener(window, "mousemove", handler_mousemove);
-          addListener(window, "mouseup", handler_mouseup);
-        }
-        x = event.pageX;
-        y = event.pageY;
-      }
-    }
-    function handler_mousemove(event) {
-      preventEvent(event);
-      if (touch) {
-        event = event.touches[0];
-      }
-      const pageX = event.pageX;
-      const pageY = event.pageY;
-      const offsetX = pageX - x;
-      const offsetY = pageY - y;
-      const old_w = self2.width;
-      const old_h = self2.height;
-      const old_x = self2.x;
-      const old_y = self2.y;
-      let resize_w, resize_h, move_x, move_y;
-      if (dir === "drag") {
-        self2.x += offsetX;
-        self2.y += offsetY;
-        move_x = move_y = 1;
-      } else {
-        if (dir === "e" || dir === "se" || dir === "ne") {
-          self2.width += offsetX;
-          resize_w = 1;
-        } else if (dir === "w" || dir === "sw" || dir === "nw") {
-          self2.x += offsetX;
-          self2.width -= offsetX;
-          resize_w = 1;
-          move_x = 1;
-        }
-        if (dir === "s" || dir === "se" || dir === "sw") {
-          self2.height += offsetY;
-          resize_h = 1;
-        } else if (dir === "n" || dir === "ne" || dir === "nw") {
-          self2.y += offsetY;
-          self2.height -= offsetY;
-          resize_h = 1;
-          move_y = 1;
-        }
-      }
-      if (resize_w) {
-        self2.width = Math.max(
-          Math.min(self2.width, self2.maxwidth, root_w - self2.x - self2.right),
-          self2.minwidth
-        );
-        resize_w = self2.width !== old_w;
-      }
-      if (resize_h) {
-        self2.height = Math.max(
-          Math.min(self2.height, self2.maxheight, root_h - self2.y - self2.bottom),
-          self2.minheight
-        );
-        resize_h = self2.height !== old_h;
-      }
-      if (resize_w || resize_h) {
-        use_raf ? raf_resize = true : self2.resize();
-      }
-      if (move_x) {
-        self2.x = Math.max(
-          Math.min(self2.x, root_w - self2.width - self2.right),
-          self2.left
-        );
-        move_x = self2.x !== old_x;
-      }
-      if (move_y) {
-        self2.y = Math.max(
-          Math.min(self2.y, root_h - self2.height - self2.bottom),
-          self2.top
-        );
-        move_y = self2.y !== old_y;
-      }
-      if (move_x || move_y) {
-        use_raf ? raf_move = true : self2.move();
-      }
-      if (resize_w || move_x) {
-        x = pageX;
-      }
-      if (resize_h || move_y) {
-        y = pageY;
-      }
-    }
-    function handler_mouseup(event) {
-      preventEvent(event);
-      removeClass(body, "wb-lock");
-      use_raf && cancelAnimationFrame(raf_timer);
-      if (touch) {
-        removeListener(window, "touchmove", handler_mousemove, eventOptions);
-        removeListener(window, "touchend", handler_mouseup, eventOptions);
-      } else {
-        removeListener(window, "mousemove", handler_mousemove);
-        removeListener(window, "mouseup", handler_mouseup);
-      }
-    }
-  }
-  function init2() {
-    const doc = document.documentElement;
-    root_w = doc.clientWidth;
-    root_h = doc.clientHeight;
-  }
-  function has_fullscreen() {
-    return document["fullscreen"] || document["fullscreenElement"] || document["webkitFullscreenElement"] || document["mozFullScreenElement"];
-  }
-  function cancel_fullscreen() {
-    is_fullscreen.full = false;
-    if (has_fullscreen()) {
-      document[prefix_exit]();
-      return true;
-    }
-  }
-
-  // node_modules/@floating-ui/utils/dist/floating-ui.utils.mjs
-  var min = Math.min;
-  var max = Math.max;
-  var round = Math.round;
-  var createCoords = (v) => ({
-    x: v,
-    y: v
-  });
-  var oppositeSideMap = {
-    left: "right",
-    right: "left",
-    bottom: "top",
-    top: "bottom"
-  };
-  var oppositeAlignmentMap = {
-    start: "end",
-    end: "start"
-  };
-  function clamp(start, value, end) {
-    return max(start, min(value, end));
-  }
-  function evaluate(value, param) {
-    return typeof value === "function" ? value(param) : value;
-  }
-  function getSide(placement) {
-    return placement.split("-")[0];
-  }
-  function getAlignment(placement) {
-    return placement.split("-")[1];
-  }
-  function getOppositeAxis(axis) {
-    return axis === "x" ? "y" : "x";
-  }
-  function getAxisLength(axis) {
-    return axis === "y" ? "height" : "width";
-  }
-  function getSideAxis(placement) {
-    return ["top", "bottom"].includes(getSide(placement)) ? "y" : "x";
-  }
-  function getAlignmentAxis(placement) {
-    return getOppositeAxis(getSideAxis(placement));
-  }
-  function getAlignmentSides(placement, rects, rtl) {
-    if (rtl === void 0) {
-      rtl = false;
-    }
-    const alignment = getAlignment(placement);
-    const alignmentAxis = getAlignmentAxis(placement);
-    const length = getAxisLength(alignmentAxis);
-    let mainAlignmentSide = alignmentAxis === "x" ? alignment === (rtl ? "end" : "start") ? "right" : "left" : alignment === "start" ? "bottom" : "top";
-    if (rects.reference[length] > rects.floating[length]) {
-      mainAlignmentSide = getOppositePlacement(mainAlignmentSide);
-    }
-    return [mainAlignmentSide, getOppositePlacement(mainAlignmentSide)];
-  }
-  function getExpandedPlacements(placement) {
-    const oppositePlacement = getOppositePlacement(placement);
-    return [getOppositeAlignmentPlacement(placement), oppositePlacement, getOppositeAlignmentPlacement(oppositePlacement)];
-  }
-  function getOppositeAlignmentPlacement(placement) {
-    return placement.replace(/start|end/g, (alignment) => oppositeAlignmentMap[alignment]);
-  }
-  function getSideList(side, isStart, rtl) {
-    const lr = ["left", "right"];
-    const rl = ["right", "left"];
-    const tb = ["top", "bottom"];
-    const bt = ["bottom", "top"];
-    switch (side) {
-      case "top":
-      case "bottom":
-        if (rtl)
-          return isStart ? rl : lr;
-        return isStart ? lr : rl;
-      case "left":
-      case "right":
-        return isStart ? tb : bt;
-      default:
-        return [];
-    }
-  }
-  function getOppositeAxisPlacements(placement, flipAlignment, direction, rtl) {
-    const alignment = getAlignment(placement);
-    let list = getSideList(getSide(placement), direction === "start", rtl);
-    if (alignment) {
-      list = list.map((side) => side + "-" + alignment);
-      if (flipAlignment) {
-        list = list.concat(list.map(getOppositeAlignmentPlacement));
-      }
-    }
-    return list;
-  }
-  function getOppositePlacement(placement) {
-    return placement.replace(/left|right|bottom|top/g, (side) => oppositeSideMap[side]);
-  }
-  function expandPaddingObject(padding) {
-    return {
-      top: 0,
-      right: 0,
-      bottom: 0,
-      left: 0,
-      ...padding
-    };
-  }
-  function getPaddingObject(padding) {
-    return typeof padding !== "number" ? expandPaddingObject(padding) : {
-      top: padding,
-      right: padding,
-      bottom: padding,
-      left: padding
-    };
-  }
-  function rectToClientRect(rect) {
-    return {
-      ...rect,
-      top: rect.y,
-      left: rect.x,
-      right: rect.x + rect.width,
-      bottom: rect.y + rect.height
-    };
-  }
-
-  // node_modules/@floating-ui/core/dist/floating-ui.core.mjs
-  function computeCoordsFromPlacement(_ref, placement, rtl) {
-    let {
-      reference,
-      floating
-    } = _ref;
-    const sideAxis = getSideAxis(placement);
-    const alignmentAxis = getAlignmentAxis(placement);
-    const alignLength = getAxisLength(alignmentAxis);
-    const side = getSide(placement);
-    const isVertical = sideAxis === "y";
-    const commonX = reference.x + reference.width / 2 - floating.width / 2;
-    const commonY = reference.y + reference.height / 2 - floating.height / 2;
-    const commonAlign = reference[alignLength] / 2 - floating[alignLength] / 2;
-    let coords;
-    switch (side) {
-      case "top":
-        coords = {
-          x: commonX,
-          y: reference.y - floating.height
-        };
-        break;
-      case "bottom":
-        coords = {
-          x: commonX,
-          y: reference.y + reference.height
-        };
-        break;
-      case "right":
-        coords = {
-          x: reference.x + reference.width,
-          y: commonY
-        };
-        break;
-      case "left":
-        coords = {
-          x: reference.x - floating.width,
-          y: commonY
-        };
-        break;
-      default:
-        coords = {
-          x: reference.x,
-          y: reference.y
-        };
-    }
-    switch (getAlignment(placement)) {
-      case "start":
-        coords[alignmentAxis] -= commonAlign * (rtl && isVertical ? -1 : 1);
-        break;
-      case "end":
-        coords[alignmentAxis] += commonAlign * (rtl && isVertical ? -1 : 1);
-        break;
-    }
-    return coords;
-  }
-  var computePosition = async (reference, floating, config) => {
-    const {
-      placement = "bottom",
-      strategy = "absolute",
-      middleware = [],
-      platform: platform2
-    } = config;
-    const validMiddleware = middleware.filter(Boolean);
-    const rtl = await (platform2.isRTL == null ? void 0 : platform2.isRTL(floating));
-    let rects = await platform2.getElementRects({
-      reference,
-      floating,
-      strategy
-    });
-    let {
-      x,
-      y
-    } = computeCoordsFromPlacement(rects, placement, rtl);
-    let statefulPlacement = placement;
-    let middlewareData = {};
-    let resetCount = 0;
-    for (let i = 0; i < validMiddleware.length; i++) {
-      const {
-        name,
-        fn
-      } = validMiddleware[i];
-      const {
-        x: nextX,
-        y: nextY,
-        data,
-        reset
-      } = await fn({
-        x,
-        y,
-        initialPlacement: placement,
-        placement: statefulPlacement,
-        strategy,
-        middlewareData,
-        rects,
-        platform: platform2,
-        elements: {
-          reference,
-          floating
-        }
-      });
-      x = nextX != null ? nextX : x;
-      y = nextY != null ? nextY : y;
-      middlewareData = {
-        ...middlewareData,
-        [name]: {
-          ...middlewareData[name],
-          ...data
-        }
-      };
-      if (reset && resetCount <= 50) {
-        resetCount++;
-        if (typeof reset === "object") {
-          if (reset.placement) {
-            statefulPlacement = reset.placement;
-          }
-          if (reset.rects) {
-            rects = reset.rects === true ? await platform2.getElementRects({
-              reference,
-              floating,
-              strategy
-            }) : reset.rects;
-          }
-          ({
-            x,
-            y
-          } = computeCoordsFromPlacement(rects, statefulPlacement, rtl));
-        }
-        i = -1;
-        continue;
-      }
-    }
-    return {
-      x,
-      y,
-      placement: statefulPlacement,
-      strategy,
-      middlewareData
-    };
-  };
-  async function detectOverflow(state, options) {
-    var _await$platform$isEle;
-    if (options === void 0) {
-      options = {};
-    }
-    const {
-      x,
-      y,
-      platform: platform2,
-      rects,
-      elements,
-      strategy
-    } = state;
-    const {
-      boundary = "clippingAncestors",
-      rootBoundary = "viewport",
-      elementContext = "floating",
-      altBoundary = false,
-      padding = 0
-    } = evaluate(options, state);
-    const paddingObject = getPaddingObject(padding);
-    const altContext = elementContext === "floating" ? "reference" : "floating";
-    const element = elements[altBoundary ? altContext : elementContext];
-    const clippingClientRect = rectToClientRect(await platform2.getClippingRect({
-      element: ((_await$platform$isEle = await (platform2.isElement == null ? void 0 : platform2.isElement(element))) != null ? _await$platform$isEle : true) ? element : element.contextElement || await (platform2.getDocumentElement == null ? void 0 : platform2.getDocumentElement(elements.floating)),
-      boundary,
-      rootBoundary,
-      strategy
-    }));
-    const rect = elementContext === "floating" ? {
-      ...rects.floating,
-      x,
-      y
-    } : rects.reference;
-    const offsetParent = await (platform2.getOffsetParent == null ? void 0 : platform2.getOffsetParent(elements.floating));
-    const offsetScale = await (platform2.isElement == null ? void 0 : platform2.isElement(offsetParent)) ? await (platform2.getScale == null ? void 0 : platform2.getScale(offsetParent)) || {
-      x: 1,
-      y: 1
-    } : {
-      x: 1,
-      y: 1
-    };
-    const elementClientRect = rectToClientRect(platform2.convertOffsetParentRelativeRectToViewportRelativeRect ? await platform2.convertOffsetParentRelativeRectToViewportRelativeRect({
-      rect,
-      offsetParent,
-      strategy
-    }) : rect);
-    return {
-      top: (clippingClientRect.top - elementClientRect.top + paddingObject.top) / offsetScale.y,
-      bottom: (elementClientRect.bottom - clippingClientRect.bottom + paddingObject.bottom) / offsetScale.y,
-      left: (clippingClientRect.left - elementClientRect.left + paddingObject.left) / offsetScale.x,
-      right: (elementClientRect.right - clippingClientRect.right + paddingObject.right) / offsetScale.x
-    };
-  }
-  var flip = function(options) {
-    if (options === void 0) {
-      options = {};
-    }
-    return {
-      name: "flip",
-      options,
-      async fn(state) {
-        var _middlewareData$arrow, _middlewareData$flip;
-        const {
-          placement,
-          middlewareData,
-          rects,
-          initialPlacement,
-          platform: platform2,
-          elements
-        } = state;
-        const {
-          mainAxis: checkMainAxis = true,
-          crossAxis: checkCrossAxis = true,
-          fallbackPlacements: specifiedFallbackPlacements,
-          fallbackStrategy = "bestFit",
-          fallbackAxisSideDirection = "none",
-          flipAlignment = true,
-          ...detectOverflowOptions
-        } = evaluate(options, state);
-        if ((_middlewareData$arrow = middlewareData.arrow) != null && _middlewareData$arrow.alignmentOffset) {
-          return {};
-        }
-        const side = getSide(placement);
-        const isBasePlacement = getSide(initialPlacement) === initialPlacement;
-        const rtl = await (platform2.isRTL == null ? void 0 : platform2.isRTL(elements.floating));
-        const fallbackPlacements = specifiedFallbackPlacements || (isBasePlacement || !flipAlignment ? [getOppositePlacement(initialPlacement)] : getExpandedPlacements(initialPlacement));
-        if (!specifiedFallbackPlacements && fallbackAxisSideDirection !== "none") {
-          fallbackPlacements.push(...getOppositeAxisPlacements(initialPlacement, flipAlignment, fallbackAxisSideDirection, rtl));
-        }
-        const placements2 = [initialPlacement, ...fallbackPlacements];
-        const overflow = await detectOverflow(state, detectOverflowOptions);
-        const overflows = [];
-        let overflowsData = ((_middlewareData$flip = middlewareData.flip) == null ? void 0 : _middlewareData$flip.overflows) || [];
-        if (checkMainAxis) {
-          overflows.push(overflow[side]);
-        }
-        if (checkCrossAxis) {
-          const sides2 = getAlignmentSides(placement, rects, rtl);
-          overflows.push(overflow[sides2[0]], overflow[sides2[1]]);
-        }
-        overflowsData = [...overflowsData, {
-          placement,
-          overflows
-        }];
-        if (!overflows.every((side2) => side2 <= 0)) {
-          var _middlewareData$flip2, _overflowsData$filter;
-          const nextIndex = (((_middlewareData$flip2 = middlewareData.flip) == null ? void 0 : _middlewareData$flip2.index) || 0) + 1;
-          const nextPlacement = placements2[nextIndex];
-          if (nextPlacement) {
-            return {
-              data: {
-                index: nextIndex,
-                overflows: overflowsData
-              },
-              reset: {
-                placement: nextPlacement
-              }
-            };
-          }
-          let resetPlacement = (_overflowsData$filter = overflowsData.filter((d) => d.overflows[0] <= 0).sort((a, b) => a.overflows[1] - b.overflows[1])[0]) == null ? void 0 : _overflowsData$filter.placement;
-          if (!resetPlacement) {
-            switch (fallbackStrategy) {
-              case "bestFit": {
-                var _overflowsData$map$so;
-                const placement2 = (_overflowsData$map$so = overflowsData.map((d) => [d.placement, d.overflows.filter((overflow2) => overflow2 > 0).reduce((acc, overflow2) => acc + overflow2, 0)]).sort((a, b) => a[1] - b[1])[0]) == null ? void 0 : _overflowsData$map$so[0];
-                if (placement2) {
-                  resetPlacement = placement2;
-                }
-                break;
-              }
-              case "initialPlacement":
-                resetPlacement = initialPlacement;
-                break;
-            }
-          }
-          if (placement !== resetPlacement) {
-            return {
-              reset: {
-                placement: resetPlacement
-              }
-            };
-          }
-        }
-        return {};
-      }
-    };
-  };
-  async function convertValueToCoords(state, options) {
-    const {
-      placement,
-      platform: platform2,
-      elements
-    } = state;
-    const rtl = await (platform2.isRTL == null ? void 0 : platform2.isRTL(elements.floating));
-    const side = getSide(placement);
-    const alignment = getAlignment(placement);
-    const isVertical = getSideAxis(placement) === "y";
-    const mainAxisMulti = ["left", "top"].includes(side) ? -1 : 1;
-    const crossAxisMulti = rtl && isVertical ? -1 : 1;
-    const rawValue = evaluate(options, state);
-    let {
-      mainAxis,
-      crossAxis,
-      alignmentAxis
-    } = typeof rawValue === "number" ? {
-      mainAxis: rawValue,
-      crossAxis: 0,
-      alignmentAxis: null
-    } : {
-      mainAxis: 0,
-      crossAxis: 0,
-      alignmentAxis: null,
-      ...rawValue
-    };
-    if (alignment && typeof alignmentAxis === "number") {
-      crossAxis = alignment === "end" ? alignmentAxis * -1 : alignmentAxis;
-    }
-    return isVertical ? {
-      x: crossAxis * crossAxisMulti,
-      y: mainAxis * mainAxisMulti
-    } : {
-      x: mainAxis * mainAxisMulti,
-      y: crossAxis * crossAxisMulti
-    };
-  }
-  var offset = function(options) {
-    if (options === void 0) {
-      options = 0;
-    }
-    return {
-      name: "offset",
-      options,
-      async fn(state) {
-        const {
-          x,
-          y
-        } = state;
-        const diffCoords = await convertValueToCoords(state, options);
-        return {
-          x: x + diffCoords.x,
-          y: y + diffCoords.y,
-          data: diffCoords
-        };
-      }
-    };
-  };
-  var shift = function(options) {
-    if (options === void 0) {
-      options = {};
-    }
-    return {
-      name: "shift",
-      options,
-      async fn(state) {
-        const {
-          x,
-          y,
-          placement
-        } = state;
-        const {
-          mainAxis: checkMainAxis = true,
-          crossAxis: checkCrossAxis = false,
-          limiter = {
-            fn: (_ref) => {
-              let {
-                x: x2,
-                y: y2
-              } = _ref;
-              return {
-                x: x2,
-                y: y2
-              };
-            }
-          },
-          ...detectOverflowOptions
-        } = evaluate(options, state);
-        const coords = {
-          x,
-          y
-        };
-        const overflow = await detectOverflow(state, detectOverflowOptions);
-        const crossAxis = getSideAxis(getSide(placement));
-        const mainAxis = getOppositeAxis(crossAxis);
-        let mainAxisCoord = coords[mainAxis];
-        let crossAxisCoord = coords[crossAxis];
-        if (checkMainAxis) {
-          const minSide = mainAxis === "y" ? "top" : "left";
-          const maxSide = mainAxis === "y" ? "bottom" : "right";
-          const min2 = mainAxisCoord + overflow[minSide];
-          const max2 = mainAxisCoord - overflow[maxSide];
-          mainAxisCoord = clamp(min2, mainAxisCoord, max2);
-        }
-        if (checkCrossAxis) {
-          const minSide = crossAxis === "y" ? "top" : "left";
-          const maxSide = crossAxis === "y" ? "bottom" : "right";
-          const min2 = crossAxisCoord + overflow[minSide];
-          const max2 = crossAxisCoord - overflow[maxSide];
-          crossAxisCoord = clamp(min2, crossAxisCoord, max2);
-        }
-        const limitedCoords = limiter.fn({
-          ...state,
-          [mainAxis]: mainAxisCoord,
-          [crossAxis]: crossAxisCoord
+        chrome.tabs.sendMessage(tabs[0].id, {
+          action: "log",
+          data: { level, tag: this.tag, messages }
         });
-        return {
-          ...limitedCoords,
-          data: {
-            x: limitedCoords.x - x,
-            y: limitedCoords.y - y
-          }
-        };
-      }
-    };
+      });
+    }
   };
 
-  // node_modules/@floating-ui/utils/dom/dist/floating-ui.utils.dom.mjs
-  function getNodeName(node) {
-    if (isNode(node)) {
-      return (node.nodeName || "").toLowerCase();
-    }
-    return "#document";
-  }
-  function getWindow(node) {
-    var _node$ownerDocument;
-    return (node == null ? void 0 : (_node$ownerDocument = node.ownerDocument) == null ? void 0 : _node$ownerDocument.defaultView) || window;
-  }
-  function getDocumentElement(node) {
-    var _ref;
-    return (_ref = (isNode(node) ? node.ownerDocument : node.document) || window.document) == null ? void 0 : _ref.documentElement;
-  }
-  function isNode(value) {
-    return value instanceof Node || value instanceof getWindow(value).Node;
-  }
-  function isElement2(value) {
-    return value instanceof Element || value instanceof getWindow(value).Element;
-  }
-  function isHTMLElement(value) {
-    return value instanceof HTMLElement || value instanceof getWindow(value).HTMLElement;
-  }
-  function isShadowRoot(value) {
-    if (typeof ShadowRoot === "undefined") {
-      return false;
-    }
-    return value instanceof ShadowRoot || value instanceof getWindow(value).ShadowRoot;
-  }
-  function isOverflowElement(element) {
-    const {
-      overflow,
-      overflowX,
-      overflowY,
-      display
-    } = getComputedStyle(element);
-    return /auto|scroll|overlay|hidden|clip/.test(overflow + overflowY + overflowX) && !["inline", "contents"].includes(display);
-  }
-  function isTableElement(element) {
-    return ["table", "td", "th"].includes(getNodeName(element));
-  }
-  function isContainingBlock(element) {
-    const webkit = isWebKit();
-    const css = getComputedStyle(element);
-    return css.transform !== "none" || css.perspective !== "none" || (css.containerType ? css.containerType !== "normal" : false) || !webkit && (css.backdropFilter ? css.backdropFilter !== "none" : false) || !webkit && (css.filter ? css.filter !== "none" : false) || ["transform", "perspective", "filter"].some((value) => (css.willChange || "").includes(value)) || ["paint", "layout", "strict", "content"].some((value) => (css.contain || "").includes(value));
-  }
-  function getContainingBlock(element) {
-    let currentNode = getParentNode(element);
-    while (isHTMLElement(currentNode) && !isLastTraversableNode(currentNode)) {
-      if (isContainingBlock(currentNode)) {
-        return currentNode;
-      } else {
-        currentNode = getParentNode(currentNode);
-      }
-    }
-    return null;
-  }
-  function isWebKit() {
-    if (typeof CSS === "undefined" || !CSS.supports)
-      return false;
-    return CSS.supports("-webkit-backdrop-filter", "none");
-  }
-  function isLastTraversableNode(node) {
-    return ["html", "body", "#document"].includes(getNodeName(node));
-  }
-  function getComputedStyle(element) {
-    return getWindow(element).getComputedStyle(element);
-  }
-  function getNodeScroll(element) {
-    if (isElement2(element)) {
-      return {
-        scrollLeft: element.scrollLeft,
-        scrollTop: element.scrollTop
-      };
-    }
-    return {
-      scrollLeft: element.pageXOffset,
-      scrollTop: element.pageYOffset
-    };
-  }
-  function getParentNode(node) {
-    if (getNodeName(node) === "html") {
-      return node;
-    }
-    const result = node.assignedSlot || node.parentNode || isShadowRoot(node) && node.host || getDocumentElement(node);
-    return isShadowRoot(result) ? result.host : result;
-  }
-  function getNearestOverflowAncestor(node) {
-    const parentNode = getParentNode(node);
-    if (isLastTraversableNode(parentNode)) {
-      return node.ownerDocument ? node.ownerDocument.body : node.body;
-    }
-    if (isHTMLElement(parentNode) && isOverflowElement(parentNode)) {
-      return parentNode;
-    }
-    return getNearestOverflowAncestor(parentNode);
-  }
-  function getOverflowAncestors(node, list, traverseIframes) {
-    var _node$ownerDocument2;
-    if (list === void 0) {
-      list = [];
-    }
-    if (traverseIframes === void 0) {
-      traverseIframes = true;
-    }
-    const scrollableAncestor = getNearestOverflowAncestor(node);
-    const isBody = scrollableAncestor === ((_node$ownerDocument2 = node.ownerDocument) == null ? void 0 : _node$ownerDocument2.body);
-    const win = getWindow(scrollableAncestor);
-    if (isBody) {
-      return list.concat(win, win.visualViewport || [], isOverflowElement(scrollableAncestor) ? scrollableAncestor : [], win.frameElement && traverseIframes ? getOverflowAncestors(win.frameElement) : []);
-    }
-    return list.concat(scrollableAncestor, getOverflowAncestors(scrollableAncestor, [], traverseIframes));
-  }
-
-  // node_modules/@floating-ui/dom/dist/floating-ui.dom.mjs
-  function getCssDimensions(element) {
-    const css = getComputedStyle(element);
-    let width = parseFloat(css.width) || 0;
-    let height = parseFloat(css.height) || 0;
-    const hasOffset = isHTMLElement(element);
-    const offsetWidth = hasOffset ? element.offsetWidth : width;
-    const offsetHeight = hasOffset ? element.offsetHeight : height;
-    const shouldFallback = round(width) !== offsetWidth || round(height) !== offsetHeight;
-    if (shouldFallback) {
-      width = offsetWidth;
-      height = offsetHeight;
-    }
-    return {
-      width,
-      height,
-      $: shouldFallback
-    };
-  }
-  function unwrapElement(element) {
-    return !isElement2(element) ? element.contextElement : element;
-  }
-  function getScale(element) {
-    const domElement = unwrapElement(element);
-    if (!isHTMLElement(domElement)) {
-      return createCoords(1);
-    }
-    const rect = domElement.getBoundingClientRect();
-    const {
-      width,
-      height,
-      $
-    } = getCssDimensions(domElement);
-    let x = ($ ? round(rect.width) : rect.width) / width;
-    let y = ($ ? round(rect.height) : rect.height) / height;
-    if (!x || !Number.isFinite(x)) {
-      x = 1;
-    }
-    if (!y || !Number.isFinite(y)) {
-      y = 1;
-    }
-    return {
-      x,
-      y
-    };
-  }
-  var noOffsets = /* @__PURE__ */ createCoords(0);
-  function getVisualOffsets(element) {
-    const win = getWindow(element);
-    if (!isWebKit() || !win.visualViewport) {
-      return noOffsets;
-    }
-    return {
-      x: win.visualViewport.offsetLeft,
-      y: win.visualViewport.offsetTop
-    };
-  }
-  function shouldAddVisualOffsets(element, isFixed, floatingOffsetParent) {
-    if (isFixed === void 0) {
-      isFixed = false;
-    }
-    if (!floatingOffsetParent || isFixed && floatingOffsetParent !== getWindow(element)) {
-      return false;
-    }
-    return isFixed;
-  }
-  function getBoundingClientRect(element, includeScale, isFixedStrategy, offsetParent) {
-    if (includeScale === void 0) {
-      includeScale = false;
-    }
-    if (isFixedStrategy === void 0) {
-      isFixedStrategy = false;
-    }
-    const clientRect = element.getBoundingClientRect();
-    const domElement = unwrapElement(element);
-    let scale = createCoords(1);
-    if (includeScale) {
-      if (offsetParent) {
-        if (isElement2(offsetParent)) {
-          scale = getScale(offsetParent);
+  // src/background-script/context-menus.ts
+  var ContextMenu = class {
+    constructor() {
+      this.logger = new RemoteLogger(this);
+      this.RELOAD_ACTION = {
+        menu: {
+          id: "reload-extension",
+          title: "Reload Extension",
+          visible: true,
+          contexts: ["action"]
+        },
+        handler: (unusedInfo) => {
+          chrome.runtime.reload();
         }
-      } else {
-        scale = getScale(element);
-      }
-    }
-    const visualOffsets = shouldAddVisualOffsets(domElement, isFixedStrategy, offsetParent) ? getVisualOffsets(domElement) : createCoords(0);
-    let x = (clientRect.left + visualOffsets.x) / scale.x;
-    let y = (clientRect.top + visualOffsets.y) / scale.y;
-    let width = clientRect.width / scale.x;
-    let height = clientRect.height / scale.y;
-    if (domElement) {
-      const win = getWindow(domElement);
-      const offsetWin = offsetParent && isElement2(offsetParent) ? getWindow(offsetParent) : offsetParent;
-      let currentIFrame = win.frameElement;
-      while (currentIFrame && offsetParent && offsetWin !== win) {
-        const iframeScale = getScale(currentIFrame);
-        const iframeRect = currentIFrame.getBoundingClientRect();
-        const css = getComputedStyle(currentIFrame);
-        const left = iframeRect.left + (currentIFrame.clientLeft + parseFloat(css.paddingLeft)) * iframeScale.x;
-        const top = iframeRect.top + (currentIFrame.clientTop + parseFloat(css.paddingTop)) * iframeScale.y;
-        x *= iframeScale.x;
-        y *= iframeScale.y;
-        width *= iframeScale.x;
-        height *= iframeScale.y;
-        x += left;
-        y += top;
-        currentIFrame = getWindow(currentIFrame).frameElement;
-      }
-    }
-    return rectToClientRect({
-      width,
-      height,
-      x,
-      y
-    });
-  }
-  function convertOffsetParentRelativeRectToViewportRelativeRect(_ref) {
-    let {
-      rect,
-      offsetParent,
-      strategy
-    } = _ref;
-    const isOffsetParentAnElement = isHTMLElement(offsetParent);
-    const documentElement = getDocumentElement(offsetParent);
-    if (offsetParent === documentElement) {
-      return rect;
-    }
-    let scroll = {
-      scrollLeft: 0,
-      scrollTop: 0
-    };
-    let scale = createCoords(1);
-    const offsets = createCoords(0);
-    if (isOffsetParentAnElement || !isOffsetParentAnElement && strategy !== "fixed") {
-      if (getNodeName(offsetParent) !== "body" || isOverflowElement(documentElement)) {
-        scroll = getNodeScroll(offsetParent);
-      }
-      if (isHTMLElement(offsetParent)) {
-        const offsetRect = getBoundingClientRect(offsetParent);
-        scale = getScale(offsetParent);
-        offsets.x = offsetRect.x + offsetParent.clientLeft;
-        offsets.y = offsetRect.y + offsetParent.clientTop;
-      }
-    }
-    return {
-      width: rect.width * scale.x,
-      height: rect.height * scale.y,
-      x: rect.x * scale.x - scroll.scrollLeft * scale.x + offsets.x,
-      y: rect.y * scale.y - scroll.scrollTop * scale.y + offsets.y
-    };
-  }
-  function getClientRects(element) {
-    return Array.from(element.getClientRects());
-  }
-  function getWindowScrollBarX(element) {
-    return getBoundingClientRect(getDocumentElement(element)).left + getNodeScroll(element).scrollLeft;
-  }
-  function getDocumentRect(element) {
-    const html = getDocumentElement(element);
-    const scroll = getNodeScroll(element);
-    const body2 = element.ownerDocument.body;
-    const width = max(html.scrollWidth, html.clientWidth, body2.scrollWidth, body2.clientWidth);
-    const height = max(html.scrollHeight, html.clientHeight, body2.scrollHeight, body2.clientHeight);
-    let x = -scroll.scrollLeft + getWindowScrollBarX(element);
-    const y = -scroll.scrollTop;
-    if (getComputedStyle(body2).direction === "rtl") {
-      x += max(html.clientWidth, body2.clientWidth) - width;
-    }
-    return {
-      width,
-      height,
-      x,
-      y
-    };
-  }
-  function getViewportRect(element, strategy) {
-    const win = getWindow(element);
-    const html = getDocumentElement(element);
-    const visualViewport = win.visualViewport;
-    let width = html.clientWidth;
-    let height = html.clientHeight;
-    let x = 0;
-    let y = 0;
-    if (visualViewport) {
-      width = visualViewport.width;
-      height = visualViewport.height;
-      const visualViewportBased = isWebKit();
-      if (!visualViewportBased || visualViewportBased && strategy === "fixed") {
-        x = visualViewport.offsetLeft;
-        y = visualViewport.offsetTop;
-      }
-    }
-    return {
-      width,
-      height,
-      x,
-      y
-    };
-  }
-  function getInnerBoundingClientRect(element, strategy) {
-    const clientRect = getBoundingClientRect(element, true, strategy === "fixed");
-    const top = clientRect.top + element.clientTop;
-    const left = clientRect.left + element.clientLeft;
-    const scale = isHTMLElement(element) ? getScale(element) : createCoords(1);
-    const width = element.clientWidth * scale.x;
-    const height = element.clientHeight * scale.y;
-    const x = left * scale.x;
-    const y = top * scale.y;
-    return {
-      width,
-      height,
-      x,
-      y
-    };
-  }
-  function getClientRectFromClippingAncestor(element, clippingAncestor, strategy) {
-    let rect;
-    if (clippingAncestor === "viewport") {
-      rect = getViewportRect(element, strategy);
-    } else if (clippingAncestor === "document") {
-      rect = getDocumentRect(getDocumentElement(element));
-    } else if (isElement2(clippingAncestor)) {
-      rect = getInnerBoundingClientRect(clippingAncestor, strategy);
-    } else {
-      const visualOffsets = getVisualOffsets(element);
-      rect = {
-        ...clippingAncestor,
-        x: clippingAncestor.x - visualOffsets.x,
-        y: clippingAncestor.y - visualOffsets.y
       };
-    }
-    return rectToClientRect(rect);
-  }
-  function hasFixedPositionAncestor(element, stopNode) {
-    const parentNode = getParentNode(element);
-    if (parentNode === stopNode || !isElement2(parentNode) || isLastTraversableNode(parentNode)) {
-      return false;
-    }
-    return getComputedStyle(parentNode).position === "fixed" || hasFixedPositionAncestor(parentNode, stopNode);
-  }
-  function getClippingElementAncestors(element, cache) {
-    const cachedResult = cache.get(element);
-    if (cachedResult) {
-      return cachedResult;
-    }
-    let result = getOverflowAncestors(element, [], false).filter((el) => isElement2(el) && getNodeName(el) !== "body");
-    let currentContainingBlockComputedStyle = null;
-    const elementIsFixed = getComputedStyle(element).position === "fixed";
-    let currentNode = elementIsFixed ? getParentNode(element) : element;
-    while (isElement2(currentNode) && !isLastTraversableNode(currentNode)) {
-      const computedStyle = getComputedStyle(currentNode);
-      const currentNodeIsContaining = isContainingBlock(currentNode);
-      if (!currentNodeIsContaining && computedStyle.position === "fixed") {
-        currentContainingBlockComputedStyle = null;
-      }
-      const shouldDropCurrentNode = elementIsFixed ? !currentNodeIsContaining && !currentContainingBlockComputedStyle : !currentNodeIsContaining && computedStyle.position === "static" && !!currentContainingBlockComputedStyle && ["absolute", "fixed"].includes(currentContainingBlockComputedStyle.position) || isOverflowElement(currentNode) && !currentNodeIsContaining && hasFixedPositionAncestor(element, currentNode);
-      if (shouldDropCurrentNode) {
-        result = result.filter((ancestor) => ancestor !== currentNode);
-      } else {
-        currentContainingBlockComputedStyle = computedStyle;
-      }
-      currentNode = getParentNode(currentNode);
-    }
-    cache.set(element, result);
-    return result;
-  }
-  function getClippingRect(_ref) {
-    let {
-      element,
-      boundary,
-      rootBoundary,
-      strategy
-    } = _ref;
-    const elementClippingAncestors = boundary === "clippingAncestors" ? getClippingElementAncestors(element, this._c) : [].concat(boundary);
-    const clippingAncestors = [...elementClippingAncestors, rootBoundary];
-    const firstClippingAncestor = clippingAncestors[0];
-    const clippingRect = clippingAncestors.reduce((accRect, clippingAncestor) => {
-      const rect = getClientRectFromClippingAncestor(element, clippingAncestor, strategy);
-      accRect.top = max(rect.top, accRect.top);
-      accRect.right = min(rect.right, accRect.right);
-      accRect.bottom = min(rect.bottom, accRect.bottom);
-      accRect.left = max(rect.left, accRect.left);
-      return accRect;
-    }, getClientRectFromClippingAncestor(element, firstClippingAncestor, strategy));
-    return {
-      width: clippingRect.right - clippingRect.left,
-      height: clippingRect.bottom - clippingRect.top,
-      x: clippingRect.left,
-      y: clippingRect.top
-    };
-  }
-  function getDimensions(element) {
-    return getCssDimensions(element);
-  }
-  function getRectRelativeToOffsetParent(element, offsetParent, strategy) {
-    const isOffsetParentAnElement = isHTMLElement(offsetParent);
-    const documentElement = getDocumentElement(offsetParent);
-    const isFixed = strategy === "fixed";
-    const rect = getBoundingClientRect(element, true, isFixed, offsetParent);
-    let scroll = {
-      scrollLeft: 0,
-      scrollTop: 0
-    };
-    const offsets = createCoords(0);
-    if (isOffsetParentAnElement || !isOffsetParentAnElement && !isFixed) {
-      if (getNodeName(offsetParent) !== "body" || isOverflowElement(documentElement)) {
-        scroll = getNodeScroll(offsetParent);
-      }
-      if (isOffsetParentAnElement) {
-        const offsetRect = getBoundingClientRect(offsetParent, true, isFixed, offsetParent);
-        offsets.x = offsetRect.x + offsetParent.clientLeft;
-        offsets.y = offsetRect.y + offsetParent.clientTop;
-      } else if (documentElement) {
-        offsets.x = getWindowScrollBarX(documentElement);
-      }
-    }
-    return {
-      x: rect.left + scroll.scrollLeft - offsets.x,
-      y: rect.top + scroll.scrollTop - offsets.y,
-      width: rect.width,
-      height: rect.height
-    };
-  }
-  function getTrueOffsetParent(element, polyfill) {
-    if (!isHTMLElement(element) || getComputedStyle(element).position === "fixed") {
-      return null;
-    }
-    if (polyfill) {
-      return polyfill(element);
-    }
-    return element.offsetParent;
-  }
-  function getOffsetParent(element, polyfill) {
-    const window2 = getWindow(element);
-    if (!isHTMLElement(element)) {
-      return window2;
-    }
-    let offsetParent = getTrueOffsetParent(element, polyfill);
-    while (offsetParent && isTableElement(offsetParent) && getComputedStyle(offsetParent).position === "static") {
-      offsetParent = getTrueOffsetParent(offsetParent, polyfill);
-    }
-    if (offsetParent && (getNodeName(offsetParent) === "html" || getNodeName(offsetParent) === "body" && getComputedStyle(offsetParent).position === "static" && !isContainingBlock(offsetParent))) {
-      return window2;
-    }
-    return offsetParent || getContainingBlock(element) || window2;
-  }
-  var getElementRects = async function(_ref) {
-    let {
-      reference,
-      floating,
-      strategy
-    } = _ref;
-    const getOffsetParentFn = this.getOffsetParent || getOffsetParent;
-    const getDimensionsFn = this.getDimensions;
-    return {
-      reference: getRectRelativeToOffsetParent(reference, await getOffsetParentFn(floating), strategy),
-      floating: {
-        x: 0,
-        y: 0,
-        ...await getDimensionsFn(floating)
-      }
-    };
-  };
-  function isRTL(element) {
-    return getComputedStyle(element).direction === "rtl";
-  }
-  var platform = {
-    convertOffsetParentRelativeRectToViewportRelativeRect,
-    getDocumentElement,
-    getClippingRect,
-    getOffsetParent,
-    getElementRects,
-    getClientRects,
-    getDimensions,
-    getScale,
-    isElement: isElement2,
-    isRTL
-  };
-  var computePosition2 = (reference, floating, options) => {
-    const cache = /* @__PURE__ */ new Map();
-    const mergedOptions = {
-      platform,
-      ...options
-    };
-    const platformWithCache = {
-      ...mergedOptions.platform,
-      _c: cache
-    };
-    return computePosition(reference, floating, {
-      ...mergedOptions,
-      platform: platformWithCache
-    });
-  };
-
-  // node_modules/@webcomponents/custom-elements/custom-elements.min.js
-  (function() {
-    "use strict";
-    var n = window.Document.prototype.createElement, p = window.Document.prototype.createElementNS, aa = window.Document.prototype.importNode, ba = window.Document.prototype.prepend, ca = window.Document.prototype.append, da = window.DocumentFragment.prototype.prepend, ea = window.DocumentFragment.prototype.append, q = window.Node.prototype.cloneNode, r = window.Node.prototype.appendChild, t = window.Node.prototype.insertBefore, u = window.Node.prototype.removeChild, v = window.Node.prototype.replaceChild, w = Object.getOwnPropertyDescriptor(
-      window.Node.prototype,
-      "textContent"
-    ), y = window.Element.prototype.attachShadow, z = Object.getOwnPropertyDescriptor(window.Element.prototype, "innerHTML"), A = window.Element.prototype.getAttribute, B = window.Element.prototype.setAttribute, C = window.Element.prototype.removeAttribute, D = window.Element.prototype.toggleAttribute, E = window.Element.prototype.getAttributeNS, F = window.Element.prototype.setAttributeNS, G = window.Element.prototype.removeAttributeNS, H = window.Element.prototype.insertAdjacentElement, fa = window.Element.prototype.insertAdjacentHTML, ha = window.Element.prototype.prepend, ia = window.Element.prototype.append, ja = window.Element.prototype.before, ka = window.Element.prototype.after, la = window.Element.prototype.replaceWith, ma = window.Element.prototype.remove, na = window.HTMLElement, I = Object.getOwnPropertyDescriptor(window.HTMLElement.prototype, "innerHTML"), oa = window.HTMLElement.prototype.insertAdjacentElement, pa = window.HTMLElement.prototype.insertAdjacentHTML;
-    var qa = /* @__PURE__ */ new Set();
-    "annotation-xml color-profile font-face font-face-src font-face-uri font-face-format font-face-name missing-glyph".split(" ").forEach(function(a) {
-      return qa.add(a);
-    });
-    function ra(a) {
-      var b = qa.has(a);
-      a = /^[a-z][.0-9_a-z]*-[-.0-9_a-z]*$/.test(a);
-      return !b && a;
-    }
-    var sa = document.contains ? document.contains.bind(document) : document.documentElement.contains.bind(document.documentElement);
-    function J(a) {
-      var b = a.isConnected;
-      if (void 0 !== b)
-        return b;
-      if (sa(a))
-        return true;
-      for (; a && !(a.__CE_isImportDocument || a instanceof Document); )
-        a = a.parentNode || (window.ShadowRoot && a instanceof ShadowRoot ? a.host : void 0);
-      return !(!a || !(a.__CE_isImportDocument || a instanceof Document));
-    }
-    function K(a) {
-      var b = a.children;
-      if (b)
-        return Array.prototype.slice.call(b);
-      b = [];
-      for (a = a.firstChild; a; a = a.nextSibling)
-        a.nodeType === Node.ELEMENT_NODE && b.push(a);
-      return b;
-    }
-    function L(a, b) {
-      for (; b && b !== a && !b.nextSibling; )
-        b = b.parentNode;
-      return b && b !== a ? b.nextSibling : null;
-    }
-    function M(a, b, d) {
-      for (var f = a; f; ) {
-        if (f.nodeType === Node.ELEMENT_NODE) {
-          var c = f;
-          b(c);
-          var e = c.localName;
-          if ("link" === e && "import" === c.getAttribute("rel")) {
-            f = c.import;
-            void 0 === d && (d = /* @__PURE__ */ new Set());
-            if (f instanceof Node && !d.has(f))
-              for (d.add(f), f = f.firstChild; f; f = f.nextSibling)
-                M(f, b, d);
-            f = L(a, c);
-            continue;
-          } else if ("template" === e) {
-            f = L(a, c);
-            continue;
-          }
-          if (c = c.__CE_shadowRoot)
-            for (c = c.firstChild; c; c = c.nextSibling)
-              M(c, b, d);
+      this.CLEAR_STORAGE = {
+        menu: {
+          id: "clear-storage",
+          title: "Clear Storage",
+          visible: true,
+          contexts: ["action"]
+        },
+        handler: (unusedInfo) => {
+          chrome.storage.sync.clear();
+          chrome.storage.local.clear();
         }
-        f = f.firstChild ? f.firstChild : L(a, f);
-      }
-    }
-    ;
-    function N() {
-      var a = !(null === O || void 0 === O || !O.noDocumentConstructionObserver), b = !(null === O || void 0 === O || !O.shadyDomFastWalk);
-      this.m = [];
-      this.g = [];
-      this.j = false;
-      this.shadyDomFastWalk = b;
-      this.I = !a;
-    }
-    function P(a, b, d, f) {
-      var c = window.ShadyDOM;
-      if (a.shadyDomFastWalk && c && c.inUse) {
-        if (b.nodeType === Node.ELEMENT_NODE && d(b), b.querySelectorAll)
-          for (a = c.nativeMethods.querySelectorAll.call(b, "*"), b = 0; b < a.length; b++)
-            d(a[b]);
-      } else
-        M(b, d, f);
-    }
-    function ta(a, b) {
-      a.j = true;
-      a.m.push(b);
-    }
-    function ua(a, b) {
-      a.j = true;
-      a.g.push(b);
-    }
-    function Q(a, b) {
-      a.j && P(a, b, function(d) {
-        return R(a, d);
-      });
-    }
-    function R(a, b) {
-      if (a.j && !b.__CE_patched) {
-        b.__CE_patched = true;
-        for (var d = 0; d < a.m.length; d++)
-          a.m[d](b);
-        for (d = 0; d < a.g.length; d++)
-          a.g[d](b);
-      }
-    }
-    function S(a, b) {
-      var d = [];
-      P(a, b, function(c) {
-        return d.push(c);
-      });
-      for (b = 0; b < d.length; b++) {
-        var f = d[b];
-        1 === f.__CE_state ? a.connectedCallback(f) : T(a, f);
-      }
-    }
-    function U(a, b) {
-      var d = [];
-      P(a, b, function(c) {
-        return d.push(c);
-      });
-      for (b = 0; b < d.length; b++) {
-        var f = d[b];
-        1 === f.__CE_state && a.disconnectedCallback(f);
-      }
-    }
-    function V(a, b, d) {
-      d = void 0 === d ? {} : d;
-      var f = d.J, c = d.upgrade || function(g) {
-        return T(a, g);
-      }, e = [];
-      P(a, b, function(g) {
-        a.j && R(a, g);
-        if ("link" === g.localName && "import" === g.getAttribute("rel")) {
-          var h = g.import;
-          h instanceof Node && (h.__CE_isImportDocument = true, h.__CE_registry = document.__CE_registry);
-          h && "complete" === h.readyState ? h.__CE_documentLoadHandled = true : g.addEventListener("load", function() {
-            var k = g.import;
-            if (!k.__CE_documentLoadHandled) {
-              k.__CE_documentLoadHandled = true;
-              var l = /* @__PURE__ */ new Set();
-              f && (f.forEach(function(m) {
-                return l.add(m);
-              }), l.delete(k));
-              V(a, k, { J: l, upgrade: c });
-            }
-          });
-        } else
-          e.push(g);
-      }, f);
-      for (b = 0; b < e.length; b++)
-        c(e[b]);
-    }
-    function T(a, b) {
-      try {
-        var d = b.ownerDocument, f = d.__CE_registry;
-        var c = f && (d.defaultView || d.__CE_isImportDocument) ? W(f, b.localName) : void 0;
-        if (c && void 0 === b.__CE_state) {
-          c.constructionStack.push(b);
-          try {
+      };
+      this.PRINT_STORAGE = {
+        menu: {
+          id: "print-storage",
+          title: "Print Storage",
+          visible: true,
+          contexts: ["action"]
+        },
+        handler: async (unusedInfo) => {
+          this.logger.log("Storage contents:", await storage_default.getAll());
+        }
+      };
+      this.DISABLE_ON_SITE = {
+        menu: {
+          id: "disable-on-site",
+          title: "Disable on this site",
+          visible: true,
+          contexts: ["action"]
+        },
+        handler: (unusedInfo) => {
+          storage_default.getAndUpdate("blocked-sites", async (sites) => {
+            let url;
             try {
-              if (new c.constructorFunction() !== b)
-                throw Error("The custom element constructor did not produce the element being upgraded.");
-            } finally {
-              c.constructionStack.pop();
+              const tabs = await chrome.tabs.query({
+                active: true,
+                currentWindow: true
+              });
+              const pageUrl = tabs[0].url ?? "";
+              url = new URL(pageUrl);
+            } catch (e) {
+              this.logger.debug("Unable to parse url:", e);
+              return sites;
             }
-          } catch (k) {
-            throw b.__CE_state = 2, k;
-          }
-          b.__CE_state = 1;
-          b.__CE_definition = c;
-          if (c.attributeChangedCallback && b.hasAttributes()) {
-            var e = c.observedAttributes;
-            for (c = 0; c < e.length; c++) {
-              var g = e[c], h = b.getAttribute(g);
-              null !== h && a.attributeChangedCallback(b, g, null, h, null);
+            if (!url) {
+              this.logger.debug("URL is null");
+              return sites;
             }
-          }
-          J(b) && a.connectedCallback(b);
-        }
-      } catch (k) {
-        X(k);
-      }
-    }
-    N.prototype.connectedCallback = function(a) {
-      var b = a.__CE_definition;
-      if (b.connectedCallback)
-        try {
-          b.connectedCallback.call(a);
-        } catch (d) {
-          X(d);
-        }
-    };
-    N.prototype.disconnectedCallback = function(a) {
-      var b = a.__CE_definition;
-      if (b.disconnectedCallback)
-        try {
-          b.disconnectedCallback.call(a);
-        } catch (d) {
-          X(d);
-        }
-    };
-    N.prototype.attributeChangedCallback = function(a, b, d, f, c) {
-      var e = a.__CE_definition;
-      if (e.attributeChangedCallback && -1 < e.observedAttributes.indexOf(b))
-        try {
-          e.attributeChangedCallback.call(a, b, d, f, c);
-        } catch (g) {
-          X(g);
-        }
-    };
-    function va(a, b, d, f) {
-      var c = b.__CE_registry;
-      if (c && (null === f || "http://www.w3.org/1999/xhtml" === f) && (c = W(c, d)))
-        try {
-          var e = new c.constructorFunction();
-          if (void 0 === e.__CE_state || void 0 === e.__CE_definition)
-            throw Error("Failed to construct '" + d + "': The returned value was not constructed with the HTMLElement constructor.");
-          if ("http://www.w3.org/1999/xhtml" !== e.namespaceURI)
-            throw Error("Failed to construct '" + d + "': The constructed element's namespace must be the HTML namespace.");
-          if (e.hasAttributes())
-            throw Error("Failed to construct '" + d + "': The constructed element must not have any attributes.");
-          if (null !== e.firstChild)
-            throw Error("Failed to construct '" + d + "': The constructed element must not have any children.");
-          if (null !== e.parentNode)
-            throw Error("Failed to construct '" + d + "': The constructed element must not have a parent node.");
-          if (e.ownerDocument !== b)
-            throw Error("Failed to construct '" + d + "': The constructed element's owner document is incorrect.");
-          if (e.localName !== d)
-            throw Error("Failed to construct '" + d + "': The constructed element's local name is incorrect.");
-          return e;
-        } catch (g) {
-          return X(g), b = null === f ? n.call(b, d) : p.call(b, f, d), Object.setPrototypeOf(b, HTMLUnknownElement.prototype), b.__CE_state = 2, b.__CE_definition = void 0, R(a, b), b;
-        }
-      b = null === f ? n.call(b, d) : p.call(b, f, d);
-      R(a, b);
-      return b;
-    }
-    function X(a) {
-      var b = "", d = "", f = 0, c = 0;
-      a instanceof Error ? (b = a.message, d = a.sourceURL || a.fileName || "", f = a.line || a.lineNumber || 0, c = a.column || a.columnNumber || 0) : b = "Uncaught " + String(a);
-      var e = void 0;
-      void 0 === ErrorEvent.prototype.initErrorEvent ? e = new ErrorEvent("error", { cancelable: true, message: b, filename: d, lineno: f, colno: c, error: a }) : (e = document.createEvent("ErrorEvent"), e.initErrorEvent("error", false, true, b, d, f), e.preventDefault = function() {
-        Object.defineProperty(this, "defaultPrevented", { configurable: true, get: function() {
-          return true;
-        } });
-      });
-      void 0 === e.error && Object.defineProperty(e, "error", { configurable: true, enumerable: true, get: function() {
-        return a;
-      } });
-      window.dispatchEvent(e);
-      e.defaultPrevented || console.error(a);
-    }
-    ;
-    function wa() {
-      var a = this;
-      this.g = void 0;
-      this.F = new Promise(function(b) {
-        a.l = b;
-      });
-    }
-    wa.prototype.resolve = function(a) {
-      if (this.g)
-        throw Error("Already resolved.");
-      this.g = a;
-      this.l(a);
-    };
-    function xa(a) {
-      var b = document;
-      this.l = void 0;
-      this.h = a;
-      this.g = b;
-      V(this.h, this.g);
-      "loading" === this.g.readyState && (this.l = new MutationObserver(this.G.bind(this)), this.l.observe(this.g, { childList: true, subtree: true }));
-    }
-    function ya(a) {
-      a.l && a.l.disconnect();
-    }
-    xa.prototype.G = function(a) {
-      var b = this.g.readyState;
-      "interactive" !== b && "complete" !== b || ya(this);
-      for (b = 0; b < a.length; b++)
-        for (var d = a[b].addedNodes, f = 0; f < d.length; f++)
-          V(this.h, d[f]);
-    };
-    function Y(a) {
-      this.s = /* @__PURE__ */ new Map();
-      this.u = /* @__PURE__ */ new Map();
-      this.C = /* @__PURE__ */ new Map();
-      this.A = false;
-      this.B = /* @__PURE__ */ new Map();
-      this.o = function(b) {
-        return b();
-      };
-      this.i = false;
-      this.v = [];
-      this.h = a;
-      this.D = a.I ? new xa(a) : void 0;
-    }
-    Y.prototype.H = function(a, b) {
-      var d = this;
-      if (!(b instanceof Function))
-        throw new TypeError("Custom element constructor getters must be functions.");
-      za(this, a);
-      this.s.set(a, b);
-      this.v.push(a);
-      this.i || (this.i = true, this.o(function() {
-        return Aa(d);
-      }));
-    };
-    Y.prototype.define = function(a, b) {
-      var d = this;
-      if (!(b instanceof Function))
-        throw new TypeError("Custom element constructors must be functions.");
-      za(this, a);
-      Ba(this, a, b);
-      this.v.push(a);
-      this.i || (this.i = true, this.o(function() {
-        return Aa(d);
-      }));
-    };
-    function za(a, b) {
-      if (!ra(b))
-        throw new SyntaxError("The element name '" + b + "' is not valid.");
-      if (W(a, b))
-        throw Error("A custom element with name '" + (b + "' has already been defined."));
-      if (a.A)
-        throw Error("A custom element is already being defined.");
-    }
-    function Ba(a, b, d) {
-      a.A = true;
-      var f;
-      try {
-        var c = d.prototype;
-        if (!(c instanceof Object))
-          throw new TypeError("The custom element constructor's prototype is not an object.");
-        var e = function(m) {
-          var x = c[m];
-          if (void 0 !== x && !(x instanceof Function))
-            throw Error("The '" + m + "' callback must be a function.");
-          return x;
-        };
-        var g = e("connectedCallback");
-        var h = e("disconnectedCallback");
-        var k = e("adoptedCallback");
-        var l = (f = e("attributeChangedCallback")) && d.observedAttributes || [];
-      } catch (m) {
-        throw m;
-      } finally {
-        a.A = false;
-      }
-      d = {
-        localName: b,
-        constructorFunction: d,
-        connectedCallback: g,
-        disconnectedCallback: h,
-        adoptedCallback: k,
-        attributeChangedCallback: f,
-        observedAttributes: l,
-        constructionStack: []
-      };
-      a.u.set(b, d);
-      a.C.set(d.constructorFunction, d);
-      return d;
-    }
-    Y.prototype.upgrade = function(a) {
-      V(this.h, a);
-    };
-    function Aa(a) {
-      if (false !== a.i) {
-        a.i = false;
-        for (var b = [], d = a.v, f = /* @__PURE__ */ new Map(), c = 0; c < d.length; c++)
-          f.set(d[c], []);
-        V(a.h, document, { upgrade: function(k) {
-          if (void 0 === k.__CE_state) {
-            var l = k.localName, m = f.get(l);
-            m ? m.push(k) : a.u.has(l) && b.push(k);
-          }
-        } });
-        for (c = 0; c < b.length; c++)
-          T(a.h, b[c]);
-        for (c = 0; c < d.length; c++) {
-          for (var e = d[c], g = f.get(e), h = 0; h < g.length; h++)
-            T(a.h, g[h]);
-          (e = a.B.get(e)) && e.resolve(void 0);
-        }
-        d.length = 0;
-      }
-    }
-    Y.prototype.get = function(a) {
-      if (a = W(this, a))
-        return a.constructorFunction;
-    };
-    Y.prototype.whenDefined = function(a) {
-      if (!ra(a))
-        return Promise.reject(new SyntaxError("'" + a + "' is not a valid custom element name."));
-      var b = this.B.get(a);
-      if (b)
-        return b.F;
-      b = new wa();
-      this.B.set(a, b);
-      var d = this.u.has(a) || this.s.has(a);
-      a = -1 === this.v.indexOf(a);
-      d && a && b.resolve(void 0);
-      return b.F;
-    };
-    Y.prototype.polyfillWrapFlushCallback = function(a) {
-      this.D && ya(this.D);
-      var b = this.o;
-      this.o = function(d) {
-        return a(function() {
-          return b(d);
-        });
-      };
-    };
-    function W(a, b) {
-      var d = a.u.get(b);
-      if (d)
-        return d;
-      if (d = a.s.get(b)) {
-        a.s.delete(b);
-        try {
-          return Ba(a, b, d());
-        } catch (f) {
-          X(f);
-        }
-      }
-    }
-    Y.prototype.define = Y.prototype.define;
-    Y.prototype.upgrade = Y.prototype.upgrade;
-    Y.prototype.get = Y.prototype.get;
-    Y.prototype.whenDefined = Y.prototype.whenDefined;
-    Y.prototype.polyfillDefineLazy = Y.prototype.H;
-    Y.prototype.polyfillWrapFlushCallback = Y.prototype.polyfillWrapFlushCallback;
-    function Z(a, b, d) {
-      function f(c) {
-        return function(e) {
-          for (var g = [], h = 0; h < arguments.length; ++h)
-            g[h] = arguments[h];
-          h = [];
-          for (var k = [], l = 0; l < g.length; l++) {
-            var m = g[l];
-            m instanceof Element && J(m) && k.push(m);
-            if (m instanceof DocumentFragment)
-              for (m = m.firstChild; m; m = m.nextSibling)
-                h.push(m);
-            else
-              h.push(m);
-          }
-          c.apply(this, g);
-          for (g = 0; g < k.length; g++)
-            U(a, k[g]);
-          if (J(this))
-            for (g = 0; g < h.length; g++)
-              k = h[g], k instanceof Element && S(a, k);
-        };
-      }
-      void 0 !== d.prepend && (b.prepend = f(d.prepend));
-      void 0 !== d.append && (b.append = f(d.append));
-    }
-    ;
-    function Ca(a) {
-      Document.prototype.createElement = function(b) {
-        return va(a, this, b, null);
-      };
-      Document.prototype.importNode = function(b, d) {
-        b = aa.call(this, b, !!d);
-        this.__CE_registry ? V(a, b) : Q(a, b);
-        return b;
-      };
-      Document.prototype.createElementNS = function(b, d) {
-        return va(a, this, d, b);
-      };
-      Z(a, Document.prototype, { prepend: ba, append: ca });
-    }
-    ;
-    function Da(a) {
-      function b(f) {
-        return function(c) {
-          for (var e = [], g = 0; g < arguments.length; ++g)
-            e[g] = arguments[g];
-          g = [];
-          for (var h = [], k = 0; k < e.length; k++) {
-            var l = e[k];
-            l instanceof Element && J(l) && h.push(l);
-            if (l instanceof DocumentFragment)
-              for (l = l.firstChild; l; l = l.nextSibling)
-                g.push(l);
-            else
-              g.push(l);
-          }
-          f.apply(this, e);
-          for (e = 0; e < h.length; e++)
-            U(a, h[e]);
-          if (J(this))
-            for (e = 0; e < g.length; e++)
-              h = g[e], h instanceof Element && S(a, h);
-        };
-      }
-      var d = Element.prototype;
-      void 0 !== ja && (d.before = b(ja));
-      void 0 !== ka && (d.after = b(ka));
-      void 0 !== la && (d.replaceWith = function(f) {
-        for (var c = [], e = 0; e < arguments.length; ++e)
-          c[e] = arguments[e];
-        e = [];
-        for (var g = [], h = 0; h < c.length; h++) {
-          var k = c[h];
-          k instanceof Element && J(k) && g.push(k);
-          if (k instanceof DocumentFragment)
-            for (k = k.firstChild; k; k = k.nextSibling)
-              e.push(k);
-          else
-            e.push(k);
-        }
-        h = J(this);
-        la.apply(this, c);
-        for (c = 0; c < g.length; c++)
-          U(a, g[c]);
-        if (h)
-          for (U(a, this), c = 0; c < e.length; c++)
-            g = e[c], g instanceof Element && S(a, g);
-      });
-      void 0 !== ma && (d.remove = function() {
-        var f = J(this);
-        ma.call(this);
-        f && U(a, this);
-      });
-    }
-    ;
-    function Ea(a) {
-      function b(c, e) {
-        Object.defineProperty(c, "innerHTML", { enumerable: e.enumerable, configurable: true, get: e.get, set: function(g) {
-          var h = this, k = void 0;
-          J(this) && (k = [], P(a, this, function(x) {
-            x !== h && k.push(x);
-          }));
-          e.set.call(this, g);
-          if (k)
-            for (var l = 0; l < k.length; l++) {
-              var m = k[l];
-              1 === m.__CE_state && a.disconnectedCallback(m);
-            }
-          this.ownerDocument.__CE_registry ? V(a, this) : Q(a, this);
-          return g;
-        } });
-      }
-      function d(c, e) {
-        c.insertAdjacentElement = function(g, h) {
-          var k = J(h);
-          g = e.call(this, g, h);
-          k && U(a, h);
-          J(g) && S(a, h);
-          return g;
-        };
-      }
-      function f(c, e) {
-        function g(h, k) {
-          for (var l = []; h !== k; h = h.nextSibling)
-            l.push(h);
-          for (k = 0; k < l.length; k++)
-            V(a, l[k]);
-        }
-        c.insertAdjacentHTML = function(h, k) {
-          h = h.toLowerCase();
-          if ("beforebegin" === h) {
-            var l = this.previousSibling;
-            e.call(this, h, k);
-            g(l || this.parentNode.firstChild, this);
-          } else if ("afterbegin" === h)
-            l = this.firstChild, e.call(this, h, k), g(this.firstChild, l);
-          else if ("beforeend" === h)
-            l = this.lastChild, e.call(this, h, k), g(l || this.firstChild, null);
-          else if ("afterend" === h)
-            l = this.nextSibling, e.call(this, h, k), g(this.nextSibling, l);
-          else
-            throw new SyntaxError("The value provided (" + String(h) + ") is not one of 'beforebegin', 'afterbegin', 'beforeend', or 'afterend'.");
-        };
-      }
-      y && (Element.prototype.attachShadow = function(c) {
-        c = y.call(this, c);
-        if (a.j && !c.__CE_patched) {
-          c.__CE_patched = true;
-          for (var e = 0; e < a.m.length; e++)
-            a.m[e](c);
-        }
-        return this.__CE_shadowRoot = c;
-      });
-      z && z.get ? b(Element.prototype, z) : I && I.get ? b(HTMLElement.prototype, I) : ua(a, function(c) {
-        b(c, { enumerable: true, configurable: true, get: function() {
-          return q.call(this, true).innerHTML;
-        }, set: function(e) {
-          var g = "template" === this.localName, h = g ? this.content : this, k = p.call(document, this.namespaceURI, this.localName);
-          for (k.innerHTML = e; 0 < h.childNodes.length; )
-            u.call(h, h.childNodes[0]);
-          for (e = g ? k.content : k; 0 < e.childNodes.length; )
-            r.call(h, e.childNodes[0]);
-        } });
-      });
-      Element.prototype.setAttribute = function(c, e) {
-        if (1 !== this.__CE_state)
-          return B.call(this, c, e);
-        var g = A.call(this, c);
-        B.call(this, c, e);
-        e = A.call(this, c);
-        a.attributeChangedCallback(this, c, g, e, null);
-      };
-      Element.prototype.setAttributeNS = function(c, e, g) {
-        if (1 !== this.__CE_state)
-          return F.call(
-            this,
-            c,
-            e,
-            g
-          );
-        var h = E.call(this, c, e);
-        F.call(this, c, e, g);
-        g = E.call(this, c, e);
-        a.attributeChangedCallback(this, e, h, g, c);
-      };
-      Element.prototype.removeAttribute = function(c) {
-        if (1 !== this.__CE_state)
-          return C.call(this, c);
-        var e = A.call(this, c);
-        C.call(this, c);
-        null !== e && a.attributeChangedCallback(this, c, e, null, null);
-      };
-      D && (Element.prototype.toggleAttribute = function(c, e) {
-        if (1 !== this.__CE_state)
-          return D.call(this, c, e);
-        var g = A.call(this, c), h = null !== g;
-        e = D.call(this, c, e);
-        h !== e && a.attributeChangedCallback(this, c, g, e ? "" : null, null);
-        return e;
-      });
-      Element.prototype.removeAttributeNS = function(c, e) {
-        if (1 !== this.__CE_state)
-          return G.call(this, c, e);
-        var g = E.call(this, c, e);
-        G.call(this, c, e);
-        var h = E.call(this, c, e);
-        g !== h && a.attributeChangedCallback(this, e, g, h, c);
-      };
-      oa ? d(HTMLElement.prototype, oa) : H && d(Element.prototype, H);
-      pa ? f(HTMLElement.prototype, pa) : fa && f(Element.prototype, fa);
-      Z(a, Element.prototype, { prepend: ha, append: ia });
-      Da(a);
-    }
-    ;
-    var Fa = {};
-    function Ga(a) {
-      function b() {
-        var d = this.constructor;
-        var f = document.__CE_registry.C.get(d);
-        if (!f)
-          throw Error("Failed to construct a custom element: The constructor was not registered with `customElements`.");
-        var c = f.constructionStack;
-        if (0 === c.length)
-          return c = n.call(document, f.localName), Object.setPrototypeOf(c, d.prototype), c.__CE_state = 1, c.__CE_definition = f, R(a, c), c;
-        var e = c.length - 1, g = c[e];
-        if (g === Fa)
-          throw Error("Failed to construct '" + f.localName + "': This element was already constructed.");
-        c[e] = Fa;
-        Object.setPrototypeOf(g, d.prototype);
-        R(a, g);
-        return g;
-      }
-      b.prototype = na.prototype;
-      Object.defineProperty(HTMLElement.prototype, "constructor", { writable: true, configurable: true, enumerable: false, value: b });
-      window.HTMLElement = b;
-    }
-    ;
-    function Ha(a) {
-      function b(d, f) {
-        Object.defineProperty(d, "textContent", { enumerable: f.enumerable, configurable: true, get: f.get, set: function(c) {
-          if (this.nodeType === Node.TEXT_NODE)
-            f.set.call(this, c);
-          else {
-            var e = void 0;
-            if (this.firstChild) {
-              var g = this.childNodes, h = g.length;
-              if (0 < h && J(this)) {
-                e = Array(h);
-                for (var k = 0; k < h; k++)
-                  e[k] = g[k];
-              }
-            }
-            f.set.call(this, c);
-            if (e)
-              for (c = 0; c < e.length; c++)
-                U(a, e[c]);
-          }
-        } });
-      }
-      Node.prototype.insertBefore = function(d, f) {
-        if (d instanceof DocumentFragment) {
-          var c = K(d);
-          d = t.call(this, d, f);
-          if (J(this))
-            for (f = 0; f < c.length; f++)
-              S(a, c[f]);
-          return d;
-        }
-        c = d instanceof Element && J(d);
-        f = t.call(this, d, f);
-        c && U(a, d);
-        J(this) && S(a, d);
-        return f;
-      };
-      Node.prototype.appendChild = function(d) {
-        if (d instanceof DocumentFragment) {
-          var f = K(d);
-          d = r.call(this, d);
-          if (J(this))
-            for (var c = 0; c < f.length; c++)
-              S(a, f[c]);
-          return d;
-        }
-        f = d instanceof Element && J(d);
-        c = r.call(this, d);
-        f && U(a, d);
-        J(this) && S(a, d);
-        return c;
-      };
-      Node.prototype.cloneNode = function(d) {
-        d = q.call(this, !!d);
-        this.ownerDocument.__CE_registry ? V(a, d) : Q(a, d);
-        return d;
-      };
-      Node.prototype.removeChild = function(d) {
-        var f = d instanceof Element && J(d), c = u.call(this, d);
-        f && U(a, d);
-        return c;
-      };
-      Node.prototype.replaceChild = function(d, f) {
-        if (d instanceof DocumentFragment) {
-          var c = K(d);
-          d = v.call(this, d, f);
-          if (J(this))
-            for (U(a, f), f = 0; f < c.length; f++)
-              S(a, c[f]);
-          return d;
-        }
-        c = d instanceof Element && J(d);
-        var e = v.call(this, d, f), g = J(this);
-        g && U(a, f);
-        c && U(a, d);
-        g && S(a, d);
-        return e;
-      };
-      w && w.get ? b(Node.prototype, w) : ta(a, function(d) {
-        b(d, { enumerable: true, configurable: true, get: function() {
-          for (var f = [], c = this.firstChild; c; c = c.nextSibling)
-            c.nodeType !== Node.COMMENT_NODE && f.push(c.textContent);
-          return f.join("");
-        }, set: function(f) {
-          for (; this.firstChild; )
-            u.call(this, this.firstChild);
-          null != f && "" !== f && r.call(this, document.createTextNode(f));
-        } });
-      });
-    }
-    ;
-    var O = window.customElements;
-    function Ia() {
-      var a = new N();
-      Ga(a);
-      Ca(a);
-      Z(a, DocumentFragment.prototype, { prepend: da, append: ea });
-      Ha(a);
-      Ea(a);
-      window.CustomElementRegistry = Y;
-      a = new Y(a);
-      document.__CE_registry = a;
-      Object.defineProperty(window, "customElements", { configurable: true, enumerable: true, value: a });
-    }
-    O && !O.forcePolyfill && "function" == typeof O.define && "function" == typeof O.get || Ia();
-    window.__CE_installPolyfill = Ia;
-  }).call(self);
-
-  // src/utils/feedback/feedback.txt.html
-  var feedback_txt_default = '<div class="feedback-form-wrapper">\n  <form data-multi-step class="form inline">\n    <div class="row-container">\n      <div class="information">\n        <div class="logo">\n          <img src="" />\n          <p></p>\n        </div>\n        <p data-step="1">How are we doing?</p>\n        <p data-step="2">Glad you like it! Can you help us share the \u2764\uFE0F?</p>\n        <input name="feedback" data-step="3" placeholder="How can we improve?" />\n        <p data-step="4">Thanks for the feedback!</p>\n      </div>\n      <div class="action">\n        <div data-step="1">\n          <span class="star" data-star-index="1"></span>\n          <span class="star" data-star-index="2"></span>\n          <span class="star" data-star-index="3"></span>\n          <span class="star" data-star-index="4"></span>\n          <span class="star" data-star-index="5"></span>\n        </div>\n        <div data-step="2">\n          <button id="rate-on-store" type="button" data-next-step="4">\n            Rate on Webstore\n          </button>\n          <button id="decline-rate-on-store" type="button" data-next-step="4">\n            No\n          </button>\n        </div>\n        <button id="submit-form" type="button" data-step="3" data-next-step="4">\n          Submit\n        </button>\n      </div>\n    </div>\n  </form>\n</div>';
-
-  // src/utils/feedback/feedback.txt.css
-  var feedback_txt_default2 = '/* Start css reset */\n/* 1. Use a more-intuitive box-sizing model. */\n*,\n*::before,\n*::after {\n  box-sizing: border-box;\n}\n/* 2. Remove default margin */\n* {\n  margin: 0;\n}\n/* 3. Allow percentage-based heights in the application */\nhtml,\nbody {\n  height: 100%;\n}\n/* Typographic tweaks! 4. Add accessible line-height 5. Improve text rendering */\nbody {\n  line-height: 20px;\n  -webkit-font-smoothing: antialiased;\n}\n/* 6. Improve media defaults */\nimg,\npicture,\nvideo,\ncanvas,\nsvg {\n  display: block;\n  max-width: 100%;\n}\n/* 7. Remove built-in form typography styles */\ninput,\nbutton,\ntextarea,\nselect {\n  font-size: 12px;\n}\n/* 8. Avoid text overflows */\np,\nh1,\nh2,\nh3,\nh4,\nh5,\nh6 {\n  overflow-wrap: break-word;\n}\n/* End css reset */\n\n.form {\n  width: 100%;\n  font-family: Verdana, sans-serif;\n}\n[data-step],\n.form[data-current-step="4"] .action {\n  display: none;\n}\n.form[data-current-step="1"] [data-step="1"],\n.form[data-current-step="2"] [data-step="2"],\n.form[data-current-step="3"] [data-step="3"],\n.form[data-current-step="4"] [data-step="4"] {\n  display: block;\n}\n.row-container {\n  align-items: center;\n  background: #cce;\n  display: grid;\n  gap: 8px;\n  margin: 0;\n  padding: 4px 10px;\n}\n\n.information {\n  align-items: center;\n  display: grid;\n  gap: 8px;\n  grid-auto-flow: column;\n}\n.action {\n  align-items: center;\n  display: flex;\n}\n.logo {\n  align-items: center;\n  display: flex;\n  gap: 8px;\n}\n.logo img {\n  width: 15px;\n}\n.logo p {\n  display: none;\n}\nbutton {\n  background-color: transparent;\n  border-radius: 5px;\n  margin-right: 8px;\n}\n.star {\n  cursor: pointer;\n  font-size: 14px;\n  font-weight: bold;\n}\n.star:before {\n  content: "\u2606";\n}\n.full.star:before {\n  content: "\u2605";\n  color: gold;\n}\n\n.inline .row-container,\n.inline .row-container.active {\n  display: flex;\n  min-height: 35px;\n}\n.inline .row-container .information {\n  display: flex;\n  flex-grow: 100;\n}\n.row-container .information input {\n  flex: 1;\n}\n.inline .row-container[data-step="4"] .information {\n  flex-grow: 0;\n}\n\n.small .row-container .information {\n  display: flex;\n}\n\n.medium .row-container .information {\n  grid-auto-flow: row;\n}\n.medium .logo p {\n  display: block;\n}\np {\n  font-size: 12px;\n}\n\ndiv[data-step="2"] {\n  white-space: nowrap;\n}\n';
-
-  // src/_locales/en/messages.json
-  var messages_exports = {};
-  __export(messages_exports, {
-    appDesc: () => appDesc,
-    appName: () => appName,
-    appShortName: () => appShortName,
-    default: () => messages_default,
-    fdbkCareToShare: () => fdbkCareToShare,
-    fdbkHowAreWeDoing: () => fdbkHowAreWeDoing,
-    fdbkHowCanWeImprove: () => fdbkHowCanWeImprove,
-    fdbkNoResponse: () => fdbkNoResponse,
-    fdbkRateOnWebstore: () => fdbkRateOnWebstore,
-    fdbkSumbit: () => fdbkSumbit,
-    fdbkThanks: () => fdbkThanks,
-    optionAnswerPrecision: () => optionAnswerPrecision,
-    optionAnswerPrecisionDesc: () => optionAnswerPrecisionDesc,
-    optionBlockedSites: () => optionBlockedSites,
-    optionBlockedSitesDesc: () => optionBlockedSitesDesc,
-    optionDefaultHeight: () => optionDefaultHeight,
-    optionDefaultHeightDesc: () => optionDefaultHeightDesc,
-    optionDefaultToBasic: () => optionDefaultToBasic,
-    optionDefaultToBasicDesc: () => optionDefaultToBasicDesc,
-    optionDefaultWidth: () => optionDefaultWidth,
-    optionDefaultWidthDesc: () => optionDefaultWidthDesc,
-    optionEnableDarkMode: () => optionEnableDarkMode,
-    optionEnableDarkModeDesc: () => optionEnableDarkModeDesc,
-    optionEnableFractions: () => optionEnableFractions,
-    optionEnableFractionsDesc: () => optionEnableFractionsDesc,
-    optionEnableMinimize: () => optionEnableMinimize,
-    optionEnableMinimizeDesc: () => optionEnableMinimizeDesc,
-    optionUseCommaForDecimals: () => optionUseCommaForDecimals,
-    optionUseCommaForDecimalsDesc: () => optionUseCommaForDecimalsDesc,
-    optionsSaveSuccess: () => optionsSaveSuccess,
-    reportAnIssue: () => reportAnIssue,
-    showDemo: () => showDemo
-  });
-  var appName = {
-    message: "Floating Scientific Calculator",
-    description: "The name of the extension"
-  };
-  var appShortName = {
-    message: "Calculator",
-    description: "The short-version name of the extension name"
-  };
-  var appDesc = {
-    message: "A floating scientific calculator anywhere you need it",
-    description: "The description of your extension"
-  };
-  var fdbkHowAreWeDoing = {
-    message: "How are we doing?"
-  };
-  var fdbkCareToShare = {
-    message: "Glad you like it! Can you help us share the \u2764\uFE0F?"
-  };
-  var fdbkHowCanWeImprove = {
-    message: "How can we improve?"
-  };
-  var fdbkThanks = {
-    message: "Thanks for the feedback!"
-  };
-  var fdbkRateOnWebstore = {
-    message: "Rate on Webstore"
-  };
-  var fdbkNoResponse = {
-    message: "No"
-  };
-  var fdbkSumbit = {
-    message: "Submit"
-  };
-  var reportAnIssue = {
-    message: "Report an issue",
-    description: "Button text for reporting an issue"
-  };
-  var showDemo = {
-    message: "Show demo",
-    description: "Button text for showing demo"
-  };
-  var optionsSaveSuccess = {
-    message: "Successfully updated settings"
-  };
-  var optionBlockedSites = {
-    message: "Disabled on Websites"
-  };
-  var optionBlockedSitesDesc = {
-    message: "Extension will not run on these sites. Enter one site per line."
-  };
-  var optionDefaultWidth = {
-    message: "Default width"
-  };
-  var optionDefaultWidthDesc = {
-    message: "The width of the calculator when it launches."
-  };
-  var optionDefaultHeight = {
-    message: "Default height"
-  };
-  var optionDefaultHeightDesc = {
-    message: "The height of the calculator when it launches."
-  };
-  var optionEnableFractions = {
-    message: "Display result in fractions"
-  };
-  var optionEnableFractionsDesc = {
-    message: "Where possible, renders the result as a fraction instead of decimal."
-  };
-  var optionAnswerPrecision = {
-    message: "Answer precision"
-  };
-  var optionAnswerPrecisionDesc = {
-    message: "The number of decimal places that answers are round up to."
-  };
-  var optionDefaultToBasic = {
-    message: "Default to basic mode"
-  };
-  var optionDefaultToBasicDesc = {
-    message: "Launch calculator in basic mode (no trignometric functions)."
-  };
-  var optionEnableMinimize = {
-    message: "Enable minimize"
-  };
-  var optionEnableMinimizeDesc = {
-    message: "Displays a control (in the header) for minimizing the calculator"
-  };
-  var optionEnableDarkMode = {
-    message: "Enable dark mode"
-  };
-  var optionEnableDarkModeDesc = {
-    message: "Give the interface a dark look."
-  };
-  var optionUseCommaForDecimals = {
-    message: "Use comma (,) for decimals"
-  };
-  var optionUseCommaForDecimalsDesc = {
-    message: "Display 20.000,00 instead of 20,000.00"
-  };
-  var messages_default = {
-    appName,
-    appShortName,
-    appDesc,
-    fdbkHowAreWeDoing,
-    fdbkCareToShare,
-    fdbkHowCanWeImprove,
-    fdbkThanks,
-    fdbkRateOnWebstore,
-    fdbkNoResponse,
-    fdbkSumbit,
-    reportAnIssue,
-    showDemo,
-    optionsSaveSuccess,
-    optionBlockedSites,
-    optionBlockedSitesDesc,
-    optionDefaultWidth,
-    optionDefaultWidthDesc,
-    optionDefaultHeight,
-    optionDefaultHeightDesc,
-    optionEnableFractions,
-    optionEnableFractionsDesc,
-    optionAnswerPrecision,
-    optionAnswerPrecisionDesc,
-    optionDefaultToBasic,
-    optionDefaultToBasicDesc,
-    optionEnableMinimize,
-    optionEnableMinimizeDesc,
-    optionEnableDarkMode,
-    optionEnableDarkModeDesc,
-    optionUseCommaForDecimals,
-    optionUseCommaForDecimalsDesc
-  };
-
-  // src/utils/i18n.ts
-  var logger2 = new Logger("i18n");
-  var i18n = (key) => {
-    if (!key) {
-      logger2.error("A valid key is required for i18n, got", key);
-      return key;
-    }
-    if (chrome?.i18n && chrome.i18n.getMessage(key) !== "") {
-      return chrome.i18n.getMessage(key);
-    }
-    logger2.warn(
-      "chrome.i18n is not available in the current context, falling back to en-US"
-    );
-    Object.keys(messages_exports).forEach((k) => {
-    });
-    for (const [translationKey, translatedText] of Object.entries(messages_exports)) {
-      if (translationKey === key) {
-        return translatedText["message"];
-      }
-    }
-    logger2.error("No translation available for key:", key);
-    return key;
-  };
-  var appName2 = i18n("appName");
-  var appDescription = i18n("appDesc");
-
-  // src/utils/feedback/feedback.ts
-  var FeedbackForm = class extends HTMLElement {
-    constructor() {
-      super();
-      this.logger = new Logger("feedback-form");
-      this.attachShadow({ mode: "open" });
-    }
-    setProgressHandler(fn) {
-      this.progressHandler = fn;
-    }
-    static get observedAttributes() {
-      return ["size", "app-name", "logo-url", "store-link", "form-link"];
-    }
-    connectedCallback() {
-      this.logger.debug("Feedback form added to page.");
-      this.updateStyle(this);
-    }
-    disconnectedCallback() {
-      this.logger.debug("Feedback form removed from page.");
-    }
-    adoptedCallback() {
-      this.logger.debug("Feedback form moved to new page.");
-    }
-    setI18nText(elem) {
-      elem.querySelector("p[data-step='1']").innerHTML = i18n("fdbkHowAreWeDoing");
-      elem.querySelector("p[data-step='2']").innerHTML = i18n("fdbkCareToShare");
-      elem.querySelector("input[data-step='3']").setAttribute("placeholder", i18n("fdbkHowCanWeImprove"));
-      elem.querySelector("p[data-step='4']").innerHTML = i18n("fdbkThanks");
-      elem.querySelector("#rate-on-store").innerHTML = i18n("fdbkRateOnWebstore");
-      elem.querySelector("#decline-rate-on-store").innerHTML = i18n("fdbkNoResponse");
-      elem.querySelector("#submit-form").innerHTML = i18n("fdbkSumbit");
-    }
-    updateStyle(elem) {
-      const style = document.createElement("style");
-      style.textContent = feedback_txt_default2;
-      const range = document.createRange();
-      range.selectNode(document.getElementsByTagName("body").item(0));
-      const documentFragment = range.createContextualFragment(feedback_txt_default);
-      const shadow = elem.shadowRoot;
-      shadow.append(style, documentFragment);
-      const size2 = elem.getAttribute("size") ?? "inline";
-      const appName3 = elem.getAttribute("app-name") ?? i18n("appName");
-      const logo = elem.getAttribute("logo-url") ?? chrome.runtime.getURL("assets/logo-24x24.png");
-      const storeLink = elem.getAttribute("store-link") ?? "https://chrome.google.com/webstore/detail/" + i18n("@@extension_id");
-      const formLink = elem.getAttribute("form-link") ?? "https://formspree.io/f/mayzdndj";
-      this.logger.debug(`Attributes: size=${size2}, app=${appName3}, logo=${logo}`);
-      const multiStepForm = shadow.querySelector("[data-multi-step]");
-      multiStepForm.classList.remove("inline", "small", "medium");
-      multiStepForm.classList.add(size2);
-      this.setI18nText(multiStepForm);
-      multiStepForm.querySelector("img").src = logo;
-      multiStepForm.querySelector(".logo p").innerHTML = appName3;
-      let currentStep = multiStepForm.getAttribute("data-current-step");
-      if (!currentStep) {
-        currentStep = 1;
-        multiStepForm.setAttribute("data-current-step", currentStep);
-      }
-      const stars = [...multiStepForm.querySelectorAll(".star")];
-      const jumpButtons = [...multiStepForm.querySelectorAll("[data-next-step]")];
-      if (stars.length > 0) {
-        const resetStarsClass = () => stars.forEach((star) => star.classList = ["star"]);
-        const handleMouseOver = (event) => {
-          const starIndex = event.target.getAttribute("data-star-index");
-          resetStarsClass();
-          stars.forEach(
-            (star, index) => index < starIndex ? star.classList.add("full") : null
-          );
-        };
-        const handleStarClick = (event) => {
-          const starIndex = event.target.getAttribute("data-star-index");
-          if (this.progressHandler) {
-            this.progressHandler("started", starIndex);
-          }
-          currentStep = starIndex < 5 ? 3 : 2;
-          multiStepForm.setAttribute("data-current-step", currentStep);
-        };
-        stars.forEach(
-          (star) => star.addEventListener("mouseover", handleMouseOver)
-        );
-        stars.forEach((star) => star.addEventListener("click", handleStarClick));
-        multiStepForm.addEventListener("mouseleave", resetStarsClass);
-      }
-      jumpButtons.forEach(
-        (button) => button.addEventListener("click", (event) => {
-          currentStep = event.target.getAttribute("data-next-step");
-          multiStepForm.setAttribute("data-current-step", currentStep);
-          if (button.id === "rate-on-store") {
-            window.open(storeLink);
-          }
-          const data = {
-            feedback: multiStepForm.querySelector("input").value,
-            appName: appName3
-          };
-          if (button.id === "submit-form") {
-            fetch(formLink, {
-              method: "POST",
-              body: JSON.stringify(data)
-            }).then(function(response) {
-              return this.logger.debug("response", response.json());
-            }).then(function(response) {
-              this.logger.debug("response 2", response.json());
-            });
-          }
-          if (currentStep == 4) {
-            setTimeout(() => {
-              if (this.progressHandler) {
-                this.progressHandler("completed", data);
-              }
-            }, 1300);
-          }
-        })
-      );
-    }
-  };
-  customElements.define("feedback-form", FeedbackForm);
-
-  // src/utils/session-id.ts
-  var SESSION_EXPIRATION_IN_MIN = 30;
-  async function getOrCreateSessionId() {
-    let { sessionData } = await chrome.storage.session.get("sessionData");
-    const currentTimeInMs = Date.now();
-    if (sessionData && sessionData.timestamp) {
-      const durationInMin = (currentTimeInMs - sessionData.timestamp) / 6e4;
-      if (durationInMin > SESSION_EXPIRATION_IN_MIN) {
-        sessionData = null;
-      } else {
-        sessionData.timestamp = currentTimeInMs;
-        await chrome.storage.session.set({ sessionData });
-      }
-    }
-    if (!sessionData) {
-      sessionData = {
-        session_id: currentTimeInMs.toString(),
-        timestamp: currentTimeInMs.toString()
-      };
-      await chrome.storage.session.set({ sessionData });
-    }
-    return sessionData.session_id;
-  }
-
-  // src/utils/analytics.ts
-  var GA_ENDPOINT = "https://www.google-analytics.com/mp/collect";
-  var GA_DEBUG_ENDPOINT = "https://www.google-analytics.com/debug/mp/collect";
-  var MEASUREMENT_ID = measurementId;
-  var API_SECRET = gaApiSecret;
-  var DEFAULT_ENGAGEMENT_TIME_MSEC = 100;
-  var Analytics = class {
-    constructor() {
-      this.debug = IS_DEV_BUILD;
-    }
-    async getOrCreateClientId() {
-      let { clientId } = await chrome.storage.local.get("clientId");
-      if (!clientId) {
-        clientId = self.crypto.randomUUID();
-        await chrome.storage.local.set({ clientId });
-      }
-      return clientId;
-    }
-    async getSessionId() {
-      try {
-        return getOrCreateSessionId();
-      } catch (e) {
-        return new Promise((resolve) => {
-          chrome.runtime.sendMessage("get_or_create_session_id", (sessionId) => {
-            resolve(sessionId);
+            const newSites = sites ? sites + "\n" + url.hostname : url.hostname;
+            return newSites;
           });
-        });
-      }
-    }
-    async fireEvent(name, params = {}) {
-      if (!params.session_id) {
-        params.session_id = await this.getSessionId();
-      }
-      if (!params.engagement_time_msec) {
-        params.engagement_time_msec = DEFAULT_ENGAGEMENT_TIME_MSEC;
-      }
-      try {
-        const response = await fetch(
-          `${this.debug ? GA_DEBUG_ENDPOINT : GA_ENDPOINT}?measurement_id=${MEASUREMENT_ID}&api_secret=${API_SECRET}`,
-          {
-            method: "POST",
-            body: JSON.stringify({
-              client_id: await this.getOrCreateClientId(),
-              events: [
-                {
-                  name,
-                  params
-                }
-              ]
-            })
-          }
-        );
-        if (!this.debug) {
+        }
+      };
+      this.browserActionContextMenu = [
+        this.DISABLE_ON_SITE,
+        ...contextMenus
+      ];
+      this.init = () => {
+        if (IS_DEV_BUILD) {
+          this.browserActionContextMenu.push(
+            this.RELOAD_ACTION,
+            this.CLEAR_STORAGE,
+            this.PRINT_STORAGE
+          );
+        }
+        if (!chrome || !chrome.contextMenus) {
+          this.logger.warn("No access to chrome.contextMenus");
           return;
         }
-        console.log(await response.text());
-      } catch (e) {
-        console.error("Google Analytics request failed with an exception", e);
-      }
-    }
-    async firePageViewEvent(pageTitle, pageLocation, additionalParams = {}) {
-      return this.fireEvent("page_view", {
-        page_title: pageTitle,
-        page_location: pageLocation,
-        ...additionalParams
-      });
-    }
-    async fireErrorEvent(error, additionalParams = {}) {
-      return this.fireEvent("extension_error", {
-        ...error,
-        ...additionalParams
-      });
-    }
-  };
-  var analytics_default = new Analytics();
-
-  // src/utils/get-url.ts
-  var getURL = (path, mode) => {
-    if (!mode || mode === "default") {
-      return chrome?.runtime?.getURL(path);
-    }
-    if (mode === "demo") {
-      if (window.location.protocol === "chrome-extension:") {
-        return chrome.runtime.getURL(path);
-      } else if (window.location.hostname === "127.0.0.1" || window.location.hostname === "essentialkit.org") {
-        return window.location.origin + "/assets/demos/" + packageName + "/" + path;
-      }
-    }
-    console.error("Invalid mode to getURL", path);
-    return "";
-  };
-
-  // src/content-script/winbox-renderer.ts
-  var WinboxRenderer = class {
-    constructor() {
-      this.logger = new Logger(this);
-      this.mode = "default";
-      this.iframeName = "essentialkit_calc_frame";
-      this.onEscHandler = (evt) => {
-        evt = evt || window.event;
-        var isEscape = false;
-        if ("key" in evt) {
-          isEscape = evt.key === "Escape" || evt.key === "Esc";
+        chrome.contextMenus.removeAll();
+        this.browserActionContextMenu.forEach(
+          (item) => chrome.contextMenus.create(item.menu)
+        );
+        chrome.contextMenus.onClicked.addListener(this.onClick);
+      };
+      this.onClick = (info, tab) => {
+        const menuItem = this.browserActionContextMenu.find(
+          (item) => item.menu.id === info.menuItemId
+        );
+        if (menuItem) {
+          analytics_default.fireEvent("context_menu_click", { menu_id: info.menuItemId });
+          menuItem.handler(info, tab);
         } else {
-          isEscape = evt.keyCode === 27;
-        }
-        if (isEscape) {
-          this.handleMessage({
-            action: "escape",
-            href: document.location.href,
-            sourceFrame: this.iframeName
-          });
+          this.logger.error("Unable to find menu item: ", info);
         }
       };
     }
-    init() {
-      if (this.inIframe()) {
-        this.logger.debug(
-          "Not inserting previewr in iframe: ",
-          window.location.href
-        );
+    sendMessage(message) {
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        chrome.tabs.sendMessage(tabs[0].id, message, (response) => {
+          this.logger.debug("ack:", response);
+        });
+      });
+    }
+  };
+  new ContextMenu().init();
+
+  // src/background-script/icon-updater.ts
+  chrome.tabs.onUpdated.addListener((tabId, changeInfo, _tab) => {
+    chrome.tabs.get(tabId, (tab) => updateIcon(tab.url));
+  });
+  chrome.tabs.onActivated.addListener((activeInfo) => {
+    chrome.tabs.get(activeInfo.tabId, (tab) => updateIcon(tab.url));
+  });
+  var updateIcon = (url) => {
+    const icon = !url || !url.trim() || url.startsWith("chrome-extension://") || url.startsWith("chrome://newtab/") || url.startsWith("https://chrome.google.com/webstore") ? "assets/logo-gray-128x128.png" : "assets/logo-128x128.png";
+    chrome.action.setIcon({ path: chrome.runtime.getURL(icon) });
+  };
+
+  // src/background-script/feedback-checker.ts
+  var FeedbackChecker = class {
+    constructor() {
+      this.DAY_MS = 864e5;
+      this.logger = new Logger(this);
+    }
+    async runFeedbackCheck(tabInfo) {
+      if (await this.shouldRequestFeedback(tabInfo)) {
+        const feedbackData2 = {
+          status: "eligible",
+          timestamp: Date.now()
+        };
+        storage_default.put(FEEDBACK_DATA_KEY, feedbackData2);
         return;
       }
-      this.listenForCspError();
-      document.addEventListener("keydown", this.onEscHandler);
-    }
-    listenForCspError() {
-      document.addEventListener("securitypolicyviolation", (e) => {
-        if (window.name !== this.iframeName) {
-          return;
-        }
-        this.logger.error("CSP error", e, e.blockedURI);
-      });
-    }
-    async handleMessage(message) {
-      this.logger.debug("#handleMessage: ", message);
-      const mode = message.mode;
-      if (mode === "demo") {
-        this.mode = "demo";
-      }
-      switch (message.action) {
-        case "toggle-calculator":
-          try {
-            let link = getURL("standalone/calc.html", this.mode);
-            console.log("creatign url", link);
-            let newUrl = new URL(link);
-            if (newUrl.href === this.url?.href) {
-              this.logger.warn("Ignoring update of same URL", newUrl.href);
-              return;
-            }
-            this.url = newUrl;
-            this.previewUrl(newUrl, message.point);
-            return;
-          } catch (e) {
-            this.logger.log("Error creating url: ", e);
-          }
-          break;
-        case "escape":
-          this.dialog?.close();
-          break;
-        default:
-          this.logger.warn("Unhandled action: ", message.action);
-          break;
-      }
-    }
-    async previewUrl(url, point) {
-      this.logger.log("#previewUrl: ", url);
-      const winboxOptions = await this.getWinboxOptions(url, point);
-      if (!this.dialog) {
-        this.logger.debug("creating new dialog with options", winboxOptions);
-        this.dialog = new WinBox(i18n("appName"), winboxOptions);
-      } else {
-        this.logger.debug("restoring dialog");
-        this.dialog.setUrl(url.href);
-        this.dialog.move(
-          winboxOptions.x,
-          winboxOptions.y,
-          false
-        );
-      }
-      await this.registerFeedbackUI();
-      this.dialog?.show();
-    }
-    async registerFeedbackUI() {
       const feedbackData = await storage_default.get(FEEDBACK_DATA_KEY);
-      const shouldShow = feedbackData?.status === "eligible";
-      if (shouldShow) {
-        this.dialog?.addClass("show-footer");
-      }
-      const ff = this.dialog?.dom.querySelector("feedback-form");
-      ff.setProgressHandler((status, data) => {
-        if (status === "started") {
-          this.logger.log("started: this", this, chrome?.storage?.sync);
-          const feedbackUpdate = {
-            status: "honored",
-            timestamp: Date.now(),
-            rating: data
-          };
-          storage_default.put(FEEDBACK_DATA_KEY, feedbackUpdate);
-          analytics_default.fireEvent("user_feedback", {
-            action: "rate_experience",
-            star_rating: data
-          });
-        }
-        if (status === "completed") {
-          this.dialog?.removeClass("show-footer");
-          analytics_default.fireEvent("user_feedback", {
-            action: "submit_feedback",
-            feedback_text: data
-          });
-        }
-      });
-    }
-    async getWinboxOptions(url, point) {
-      let pos = { x: 0, y: 0, placement: "top" };
-      if (point) {
-        pos = await this.getPos(point);
-      }
-      return {
-        icon: getURL("assets/logo-24x24.png", this.mode),
-        x: pos.x,
-        y: pos.y,
-        width: "440px",
-        height: "360px",
-        autosize: false,
-        class: ["no-max", "no-full", "no-min", "no-move"],
-        index: await this.getMaxZIndex(),
-        html: `<iframe name="${this.iframeName}" src="${url}"></iframe>`,
-        hidden: true,
-        shadowel: "floating-calculator-preview-window",
-        framename: this.iframeName,
-        onclose: () => {
-          this.url = void 0;
-          this.dialog = void 0;
-          document.querySelectorAll("floating-calculator-preview-window")?.forEach((e) => e.remove());
-        }
-      };
-    }
-    inIframe() {
-      try {
-        return window.self !== window.top;
-      } catch (e) {
-        return true;
+      if (feedbackData?.status == "eligible") {
+        const newFeedbackStatus = {
+          status: "ineligible",
+          timestamp: Date.now()
+        };
+        storage_default.put(FEEDBACK_DATA_KEY, newFeedbackStatus);
+        return;
       }
     }
-    getMaxZIndex() {
+    async shouldRequestFeedback(tabInfo) {
+      const isNormalWindow = !await this.isIncognito(tabInfo);
+      const isSignedIn = await this.isSignedInToGoogle();
+      const isAgedInstallation = await this.getDaysSinceInstallation() > 7;
+      const hasSufficientSuccessfulInteractions = await this.getSuccessCount() >= 30;
+      const isEligibleForReissue = await this.isEligibleForReissue();
+      const isEligible = isNormalWindow && isSignedIn && isAgedInstallation && hasSufficientSuccessfulInteractions && isEligibleForReissue;
+      this.logger.debug(
+        `isEligible: ${isEligible}. Based on 
+      isNormalWindow: ${isNormalWindow}, 
+      isSignedIn: ${isSignedIn}, 
+      isAgedInstallation: ${isAgedInstallation}, 
+      hasSufficientSuccessfulInteractions: ${hasSufficientSuccessfulInteractions}, 
+      isEligibleForReissue: ${isEligibleForReissue}`
+      );
+      return isEligible;
+    }
+    async isIncognito(activeTabInfo) {
+      if (activeTabInfo && activeTabInfo.incognito) {
+        return Promise.resolve(true);
+      }
+      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+      const t = tabs.find((t2) => t2.incognito);
+      return Promise.resolve(t !== void 0);
+    }
+    async getSuccessCount() {
+      const successRecords = await storage_default.get(SUCCESSFUL_INTERACTIONS);
+      if (!successRecords) {
+        return Promise.resolve(0);
+      } else
+        return Promise.resolve(successRecords.length);
+    }
+    isSignedInToGoogle() {
       return new Promise((resolve) => {
-        const z = Math.max(
-          ...Array.from(
-            document.querySelectorAll("body *"),
-            (el) => parseFloat(window.getComputedStyle(el).zIndex)
-          ).filter((zIndex) => !Number.isNaN(zIndex)),
-          0
+        chrome.cookies.get(
+          { url: "https://accounts.google.com", name: "LSID" },
+          (cookie) => {
+            if (cookie) {
+              resolve(true);
+            } else {
+              resolve(false);
+            }
+          }
         );
-        resolve(z);
       });
     }
-    async getPos(rect) {
-      const virtualEl = {
-        getBoundingClientRect() {
-          return rect;
-        }
-      };
-      const div = document.createElement("div");
-      div.style.width = "655px";
-      div.style.height = "360px";
-      div.style.position = "fixed";
-      div.style.visibility = "hidden";
-      document.body.appendChild(div);
-      return computePosition2(virtualEl, div, {
-        placement: "top",
-        strategy: "fixed",
-        middleware: [
-          offset(12),
-          flip(),
-          shift({ padding: 5 })
-        ]
-      }).then(({ x, y, placement, middlewareData }) => {
-        return {
-          x,
-          y,
-          placement
-        };
-      });
+    async getDaysSinceInstallation() {
+      const installTimeMs = await storage_default.get(INSTALL_TIME_MS);
+      if (!installTimeMs) {
+        await storage_default.put(INSTALL_TIME_MS, Date.now());
+        return Promise.resolve(0);
+      }
+      const diffTime = Date.now() - installTimeMs;
+      const diffDays = Math.ceil(diffTime / (1e3 * 60 * 60 * 24));
+      return Promise.resolve(diffDays);
+    }
+    async isEligibleForReissue() {
+      const feedback = await storage_default.get(FEEDBACK_DATA_KEY);
+      if (!feedback) {
+        return Promise.resolve(true);
+      }
+      if (feedback.status === "honored") {
+        return Promise.resolve(false);
+      }
+      return Promise.resolve(true);
     }
   };
+  var checker = new FeedbackChecker();
+  chrome.tabs.onActivated.addListener((activeInfo) => {
+    chrome.tabs.get(activeInfo.tabId, (tab) => checker.runFeedbackCheck(tab));
+  });
+  chrome.tabs.onUpdated.addListener((tabId, changeInfo, _tab) => {
+    chrome.tabs.get(tabId, (tab) => checker.runFeedbackCheck(tab));
+  });
 
-  // src/content-script/content-script.ts
-  var ContentScript = class {
-    constructor() {
-      this.logger = new Logger("content-script");
-      this.winboxRenderer = new WinboxRenderer();
+  // src/background-script/service-worker.ts
+  var onMessage = (message, sender, callback) => {
+    if (!sender.id || sender.id !== chrome.i18n.getMessage("@@extension_id")) {
+      console.warn("Ignoring message from unknown sender", sender);
+      return;
     }
-    init() {
-      this.winboxRenderer.init();
-      this.trackMousePosition();
-      this.listenForBgMessage();
-    }
-    trackMousePosition() {
-      document.addEventListener("mousemove", (e) => {
-        const y = e.y < 20 ? 20 : e.y;
-        this.lastMousePosition = {
-          width: 10,
-          height: 10,
-          x: e.x,
-          y,
-          left: e.x,
-          top: y,
-          right: e.x + 10,
-          bottom: y + 10
-        };
+    console.log("Received message: ", message, " from: ", sender);
+    if (message === "get_or_create_session_id") {
+      getOrCreateSessionId().then((sessionId) => {
+        console.log("Sending session Id", sessionId);
+        callback(sessionId);
       });
+      return true;
     }
-    listenForBgMessage() {
-      chrome?.runtime?.onMessage?.addListener((request, sender, callback) => {
-        if (typeof request === "string") {
-          return;
-        }
-        this.logger.debug("#onMessage: ", request);
-        if (!request.point) {
-          request.point = this.lastMousePosition;
-        }
-        if (request.action === "user-text-selection") {
-          window.getSelection()?.removeAllRanges();
-        }
-        this.handleMessage(request.action, request.data, request.point);
-        callback("ok");
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs.length == 0) {
+        console.error("Unexpected state: No active tab");
+        return;
+      }
+      chrome.tabs.sendMessage(tabs[0].id, message, (response) => {
+        callback(response);
       });
-    }
-    listenForWindowMessages() {
-      window.addEventListener(
-        "message",
-        (event) => {
-          if (event.origin !== window.location.origin) {
-            this.logger.debug(
-              "Ignoring message from different origin",
-              event.origin,
-              event.data
-            );
-            return;
-          }
-          if (event.data.application !== packageName) {
-            this.logger.debug(
-              "Ignoring origin messsage not initiated by Floating Calculator"
-            );
-            return;
-          }
-          this.logger.log("#WindowMessage: ", event, "/ndata", event.data);
-          this.handleMessage(event.data);
-        },
-        false
-      );
-    }
-    handleMessage(action, data, point) {
-      const mssg = Object.assign(
-        { application: packageName, action, point },
-        data
-      );
-      this.winboxRenderer.handleMessage(mssg);
-    }
-    showDemo() {
-      this.logger.debug("#showDemo");
-      this.winboxRenderer.handleMessage({
-        application: packageName,
-        action: "toggle-calculator",
-        data: { mode: "demo" },
-        point: this.lastMousePosition
-      });
-    }
+    });
   };
-  storage_default.isCurrentSiteBlocked().then((isBlocked) => {
-    const isTopFrame = window.self === window.top;
-    if (!isBlocked && isTopFrame) {
-      window.ekContentScript = new ContentScript();
-      window.ekContentScript.init();
+  chrome.runtime.onMessage.addListener(onMessage);
+  chrome.action.onClicked.addListener((tab) => {
+    if (!tab.id) {
+      console.error("BG: click on tab without an id", tab);
+      return;
     }
+    let url = tab.url;
+    if (!url || !url.trim() || url.startsWith("chrome-extension://") || url.startsWith("chrome://") || url.startsWith("https://chrome.google.com/webstore")) {
+      chrome.tabs.create(
+        {
+          url: `chrome-extension://${chrome.i18n.getMessage(
+            "@@extension_id"
+          )}/standalone/calc.html?unsupportedHost`,
+          active: true
+        },
+        () => {
+          console.log(
+            "successfully created Floating Calculator tab for unsupported host."
+          );
+        }
+      );
+      return;
+    }
+    chrome.tabs.sendMessage(
+      tab.id,
+      { action: "toggle-calculator" },
+      (response) => {
+        console.log("BG: received", response);
+        storage_default.getAndUpdate(SUCCESSFUL_INTERACTIONS, (records) => {
+          if (!records) {
+            records = [];
+          }
+          records.push({
+            interaction: "invocation",
+            timestamp: Date.now()
+          });
+          return records;
+        });
+      }
+    );
   });
 })();
-//# sourceMappingURL=content-script.js.map
+//# sourceMappingURL=service-worker.js.map

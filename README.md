@@ -34,3 +34,7 @@ bundle exec jekyll serve
 ```
 
 
+# TODO
+- Calculator demo is not working since the switch out of iframes.
+- The demo needs to be invoked directly, without a window.PostMessage (which is also better, avoids triggering extension)
+- It's hard to access the object across scripts, so I assigned it to the window in ContentScript.

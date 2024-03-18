@@ -33,13 +33,20 @@ demo_content        : |
     </div>
     <button class="btn btn-primary" id="demo-button">Show Demo</button>
   </div> 
-    <script>
+    <script async defer>
+    setTimeout( () => {
+      console.log("running timeout");
     document.querySelector("#demo-button").addEventListener("click", (event) => {
+      console.log("demo clik");
+      var cs = window.ekContentScript.showDemo();
+      console.log("cs", cs);
+      cs.showDemo();
         window.postMessage(
           { application: "floating-calculator", action: "toggle-calculator", mode: "demo"},
           window.location.origin
         );
-    });
+    })
+    }, 1000);
   </script>
 
 # For icons, see https://fonts.google.com/icons

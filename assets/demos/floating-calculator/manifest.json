@@ -46,6 +46,7 @@
         "48": "assets/logo-48x48.png",
         "128": "assets/logo-128x128.png"
     },
+    "options_page": "options-page/options.html",
     "web_accessible_resources": [
         {
             "resources": [
@@ -113,6 +114,6 @@
         }
     ],
     "background": {
-        "service_worker": "background-script/background.js"
+        "service_worker": "background-script/service-worker.js"
     }
 }

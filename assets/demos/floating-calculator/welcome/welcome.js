@@ -4933,13 +4933,10 @@ Url: ${_getEventFilterUrl(event)}`
     name: "__MSG_appName__",
     description: "__MSG_appDesc__",
     short_name: "__MSG_appShortName_",
-    __package_name: "floating-calculator",
+    "__comment:homepage_url": "This should be the webstore link, __MSG_@@extension_id__ is not allowed",
     homepage_url: "https://chrome.google.com/webstore/detail/floating-calculator/mbfnbhfjnjeedaknilkfegfnnmmmmpmn",
     "__comment:version": "Firefox does not support leading zeros in versions",
     version: "23.11.15",
-    __sentry_dsn: "https://11fa19323b3a48d5882f26d3a98c1864@o526305.ingest.sentry.io/4504743091699712",
-    __measurement_id: "G-ZCZLZLYH36",
-    __ga_api_secret: "UIXmDH2iRxaZPMd1S_UUww",
     manifest_version: 3,
     default_locale: "en",
     author: "Justice Ogbonna",
@@ -4970,6 +4967,7 @@ Url: ${_getEventFilterUrl(event)}`
       "48": "assets/logo-48x48.png",
       "128": "assets/logo-128x128.png"
     },
+    options_page: "options-page/options.html",
     web_accessible_resources: [
       {
         resources: ["assets/logo-24x24.png"],
@@ -5005,8 +5003,8 @@ Url: ${_getEventFilterUrl(event)}`
       }
     ],
     background: {
-      __chrome__service_worker: "background-script/background.js",
-      __firefox__scripts: ["background-script/background.js"]
+      __chrome__service_worker: "background-script/service-worker.js",
+      __firefox__scripts: ["background-script/service-worker.js"]
     },
     __firefox__key: "",
     __firefox__browser_specific_settings: {
@@ -5016,8 +5014,86 @@ Url: ${_getEventFilterUrl(event)}`
     }
   };
 
+  // src/config.ts
+  var packageName = "floating-calculator";
+  var applicationId = packageName + "/" + chrome?.i18n?.getMessage("@@extension_id");
+  var sentryDsn = "https://11fa19323b3a48d5882f26d3a98c1864@o526305.ingest.sentry.io/4504743091699712";
+  var measurementId = "G-ZCZLZLYH36";
+  var gaApiSecret = "UIXmDH2iRxaZPMd1S_UUww";
+  var configOptions = [
+    {
+      id: "default-width",
+      type: "range",
+      title: "optionDefaultWidth",
+      description: "optionDefaultWidthDesc",
+      default_value: 40,
+      min: "20",
+      max: "90"
+    },
+    {
+      id: "default-height",
+      type: "range",
+      title: "optionDefaultHeight",
+      description: "optionDefaultHeightDesc",
+      default_value: 70,
+      min: "20",
+      max: "95"
+    },
+    {
+      id: "blocked-sites",
+      type: "textarea",
+      title: "optionBlockedSites",
+      description: "optionBlockedSitesDesc",
+      default_value: ""
+    },
+    {
+      id: "enable-fractions",
+      type: "switch",
+      title: "optionEnableFractions",
+      description: "optionEnableFractionsDesc",
+      default_value: false
+    },
+    {
+      id: "answer-precision",
+      type: "range",
+      title: "optionAnswerPrecision",
+      description: "optionAnswerPrecisionDesc",
+      default_value: 6,
+      min: "1",
+      max: "10"
+    },
+    {
+      id: "default-to-basic",
+      type: "switch",
+      title: "optionDefaultToBasic",
+      description: "optionDefaultToBasicDesc",
+      default_value: false
+    },
+    {
+      id: "enable-minimize",
+      type: "switch",
+      title: "optionEnableMinimize",
+      description: "optionEnableMinimizeDesc",
+      default_value: false
+    },
+    {
+      id: "enable-dark-mode",
+      type: "switch",
+      title: "optionEnableDarkMode",
+      description: "optionEnableDarkModeDesc",
+      default_value: false
+    },
+    {
+      id: "use-comma-decimals",
+      type: "switch",
+      title: "optionUseCommaForDecimals",
+      description: "optionUseCommaForDecimalsDesc",
+      default_value: false
+    }
+  ];
+
   // src/utils/logger.ts
-  var EXTENSION_NAME = manifest_default.__package_name;
+  var EXTENSION_NAME = packageName;
   var Logger = class {
     constructor(tag) {
       this.tag = "";
@@ -5033,7 +5109,7 @@ Url: ${_getEventFilterUrl(event)}`
     }
     initSentry() {
       init({
-        dsn: manifest_default.__sentry_dsn,
+        dsn: sentryDsn,
         tracesSampleRate: 0.1,
         release: EXTENSION_NAME + "@" + manifest_default.version,
         environment: "PROD"
@@ -5091,6 +5167,53 @@ Url: ${_getEventFilterUrl(event)}`
       }
     }
   };
+
+  // src/utils/storage.ts
+  var FEEDBACK_DATA_KEY = "feedback_data";
+  var Storage = class {
+    constructor() {
+      this.storageService = chrome?.storage?.sync ?? window.localStorage;
+    }
+    put(key, value) {
+      if (value === null || value === void 0) {
+        return Promise.reject("Attempting to save a null value");
+      }
+      if (!key) {
+        return Promise.reject("Attempting to use a null key");
+      }
+      if (!chrome?.storage?.sync) {
+        return this.storageService.setItem(key, JSON.stringify(value));
+      }
+      const data = {};
+      data[key] = value;
+      return this.storageService.set(data);
+    }
+    async get(key) {
+      if (!chrome?.storage?.sync) {
+        return JSON.parse(this.storageService.getItem(key));
+      }
+      const response = await this.storageService.get(key);
+      return response[key];
+    }
+    async getConfig(key) {
+      return await this.get(key) ?? configOptions.find((c) => c.id === key)?.default_value;
+    }
+    getAll() {
+      return this.storageService.get(null);
+    }
+    async getAndUpdate(key, updateFn) {
+      const data = await this.get(key);
+      return this.put(key, await updateFn(data));
+    }
+    async isCurrentSiteBlocked() {
+      const blockedSites = await this.get("blocked-sites");
+      if (blockedSites && window.location.hostname && blockedSites.includes(window.location.hostname)) {
+        return true;
+      }
+      return false;
+    }
+  };
+  var storage_default = new Storage();
 
   // src/utils/winbox/template.js
   var template = document.createElement("div");
@@ -8004,7 +8127,7 @@ Url: ${_getEventFilterUrl(event)}`
   }).call(self);
 
   // src/utils/feedback/feedback.txt.html
-  var feedback_txt_default = '<form data-multi-step class="form inline">\n  <div class="row-container">\n    <div class="information">\n      <div class="logo">\n        <img src="" />\n        <p></p>\n      </div>\n      <p data-step="1">How are we doing?</p>\n      <p data-step="2">Glad you like it! Can you help us share the \u2764\uFE0F?</p>\n      <input name="feedback" data-step="3" placeholder="How can we improve?" />\n      <p data-step="4">Thanks for the feedback!</p>\n    </div>\n    <div class="action">\n      <div data-step="1">\n        <span class="star" data-star-index="1"></span>\n        <span class="star" data-star-index="2"></span>\n        <span class="star" data-star-index="3"></span>\n        <span class="star" data-star-index="4"></span>\n        <span class="star" data-star-index="5"></span>\n      </div>\n      <div data-step="2">\n        <button id="rate-on-store" type="button" data-next-step="4">\n          Rate on webstore\n        </button>\n        <button id="decline-rate-on-rate" type="button" data-next-step="4">\n          No thanks\n        </button>\n      </div>\n      <button id="submit-form" type="button" data-step="3" data-next-step="4">\n        Submit\n      </button>\n    </div>\n  </div>\n</form>\n';
+  var feedback_txt_default = '<div class="feedback-form-wrapper">\n  <form data-multi-step class="form inline">\n    <div class="row-container">\n      <div class="information">\n        <div class="logo">\n          <img src="" />\n          <p></p>\n        </div>\n        <p data-step="1">How are we doing?</p>\n        <p data-step="2">Glad you like it! Can you help us share the \u2764\uFE0F?</p>\n        <input name="feedback" data-step="3" placeholder="How can we improve?" />\n        <p data-step="4">Thanks for the feedback!</p>\n      </div>\n      <div class="action">\n        <div data-step="1">\n          <span class="star" data-star-index="1"></span>\n          <span class="star" data-star-index="2"></span>\n          <span class="star" data-star-index="3"></span>\n          <span class="star" data-star-index="4"></span>\n          <span class="star" data-star-index="5"></span>\n        </div>\n        <div data-step="2">\n          <button id="rate-on-store" type="button" data-next-step="4">\n            Rate on Webstore\n          </button>\n          <button id="decline-rate-on-store" type="button" data-next-step="4">\n            No\n          </button>\n        </div>\n        <button id="submit-form" type="button" data-step="3" data-next-step="4">\n          Submit\n        </button>\n      </div>\n    </div>\n  </form>\n</div>';
 
   // src/utils/feedback/feedback.txt.css
   var feedback_txt_default2 = '/* Start css reset */\n/* 1. Use a more-intuitive box-sizing model. */\n*,\n*::before,\n*::after {\n  box-sizing: border-box;\n}\n/* 2. Remove default margin */\n* {\n  margin: 0;\n}\n/* 3. Allow percentage-based heights in the application */\nhtml,\nbody {\n  height: 100%;\n}\n/* Typographic tweaks! 4. Add accessible line-height 5. Improve text rendering */\nbody {\n  line-height: 20px;\n  -webkit-font-smoothing: antialiased;\n}\n/* 6. Improve media defaults */\nimg,\npicture,\nvideo,\ncanvas,\nsvg {\n  display: block;\n  max-width: 100%;\n}\n/* 7. Remove built-in form typography styles */\ninput,\nbutton,\ntextarea,\nselect {\n  font-size: 12px;\n}\n/* 8. Avoid text overflows */\np,\nh1,\nh2,\nh3,\nh4,\nh5,\nh6 {\n  overflow-wrap: break-word;\n}\n/* End css reset */\n\n.form {\n  width: 100%;\n  font-family: Verdana, sans-serif;\n}\n[data-step],\n.form[data-current-step="4"] .action {\n  display: none;\n}\n.form[data-current-step="1"] [data-step="1"],\n.form[data-current-step="2"] [data-step="2"],\n.form[data-current-step="3"] [data-step="3"],\n.form[data-current-step="4"] [data-step="4"] {\n  display: block;\n}\n.row-container {\n  align-items: center;\n  background: #cce;\n  display: grid;\n  gap: 8px;\n  margin: 0;\n  padding: 4px 10px;\n}\n\n.information {\n  align-items: center;\n  display: grid;\n  gap: 8px;\n  grid-auto-flow: column;\n}\n.action {\n  align-items: center;\n  display: flex;\n}\n.logo {\n  align-items: center;\n  display: flex;\n  gap: 8px;\n}\n.logo img {\n  width: 15px;\n}\n.logo p {\n  display: none;\n}\nbutton {\n  background-color: transparent;\n  border-radius: 5px;\n  margin-right: 8px;\n}\n.star {\n  cursor: pointer;\n  font-size: 14px;\n  font-weight: bold;\n}\n.star:before {\n  content: "\u2606";\n}\n.full.star:before {\n  content: "\u2605";\n  color: gold;\n}\n\n.inline .row-container,\n.inline .row-container.active {\n  display: flex;\n  min-height: 35px;\n}\n.inline .row-container .information {\n  display: flex;\n  flex-grow: 100;\n}\n.row-container .information input {\n  flex: 1;\n}\n.inline .row-container[data-step="4"] .information {\n  flex-grow: 0;\n}\n\n.small .row-container .information {\n  display: flex;\n}\n\n.medium .row-container .information {\n  grid-auto-flow: row;\n}\n.medium .logo p {\n  display: block;\n}\np {\n  font-size: 12px;\n}\n\ndiv[data-step="2"] {\n  white-space: nowrap;\n}\n';
@@ -8015,8 +8138,35 @@ Url: ${_getEventFilterUrl(event)}`
     appDesc: () => appDesc,
     appName: () => appName,
     appShortName: () => appShortName,
-    calculator_cue: () => calculator_cue,
-    default: () => messages_default
+    default: () => messages_default,
+    fdbkCareToShare: () => fdbkCareToShare,
+    fdbkHowAreWeDoing: () => fdbkHowAreWeDoing,
+    fdbkHowCanWeImprove: () => fdbkHowCanWeImprove,
+    fdbkNoResponse: () => fdbkNoResponse,
+    fdbkRateOnWebstore: () => fdbkRateOnWebstore,
+    fdbkSumbit: () => fdbkSumbit,
+    fdbkThanks: () => fdbkThanks,
+    optionAnswerPrecision: () => optionAnswerPrecision,
+    optionAnswerPrecisionDesc: () => optionAnswerPrecisionDesc,
+    optionBlockedSites: () => optionBlockedSites,
+    optionBlockedSitesDesc: () => optionBlockedSitesDesc,
+    optionDefaultHeight: () => optionDefaultHeight,
+    optionDefaultHeightDesc: () => optionDefaultHeightDesc,
+    optionDefaultToBasic: () => optionDefaultToBasic,
+    optionDefaultToBasicDesc: () => optionDefaultToBasicDesc,
+    optionDefaultWidth: () => optionDefaultWidth,
+    optionDefaultWidthDesc: () => optionDefaultWidthDesc,
+    optionEnableDarkMode: () => optionEnableDarkMode,
+    optionEnableDarkModeDesc: () => optionEnableDarkModeDesc,
+    optionEnableFractions: () => optionEnableFractions,
+    optionEnableFractionsDesc: () => optionEnableFractionsDesc,
+    optionEnableMinimize: () => optionEnableMinimize,
+    optionEnableMinimizeDesc: () => optionEnableMinimizeDesc,
+    optionUseCommaForDecimals: () => optionUseCommaForDecimals,
+    optionUseCommaForDecimalsDesc: () => optionUseCommaForDecimalsDesc,
+    optionsSaveSuccess: () => optionsSaveSuccess,
+    reportAnIssue: () => reportAnIssue,
+    showDemo: () => showDemo
   });
   var appName = {
     message: "Floating Scientific Calculator",
@@ -8030,15 +8180,124 @@ Url: ${_getEventFilterUrl(event)}`
     message: "A floating scientific calculator anywhere you need it",
     description: "The description of your extension"
   };
-  var calculator_cue = {
-    message: "calculator",
-    description: "The search query cue for calculator"
+  var fdbkHowAreWeDoing = {
+    message: "How are we doing?"
+  };
+  var fdbkCareToShare = {
+    message: "Glad you like it! Can you help us share the \u2764\uFE0F?"
+  };
+  var fdbkHowCanWeImprove = {
+    message: "How can we improve?"
+  };
+  var fdbkThanks = {
+    message: "Thanks for the feedback!"
+  };
+  var fdbkRateOnWebstore = {
+    message: "Rate on Webstore"
+  };
+  var fdbkNoResponse = {
+    message: "No"
+  };
+  var fdbkSumbit = {
+    message: "Submit"
+  };
+  var reportAnIssue = {
+    message: "Report an issue",
+    description: "Button text for reporting an issue"
+  };
+  var showDemo = {
+    message: "Show demo",
+    description: "Button text for showing demo"
+  };
+  var optionsSaveSuccess = {
+    message: "Successfully updated settings"
+  };
+  var optionBlockedSites = {
+    message: "Disabled on Websites"
+  };
+  var optionBlockedSitesDesc = {
+    message: "Extension will not run on these sites. Enter one site per line."
+  };
+  var optionDefaultWidth = {
+    message: "Default width"
+  };
+  var optionDefaultWidthDesc = {
+    message: "The width of the calculator when it launches."
+  };
+  var optionDefaultHeight = {
+    message: "Default height"
+  };
+  var optionDefaultHeightDesc = {
+    message: "The height of the calculator when it launches."
+  };
+  var optionEnableFractions = {
+    message: "Display result in fractions"
+  };
+  var optionEnableFractionsDesc = {
+    message: "Where possible, renders the result as a fraction instead of decimal."
+  };
+  var optionAnswerPrecision = {
+    message: "Answer precision"
+  };
+  var optionAnswerPrecisionDesc = {
+    message: "The number of decimal places that answers are round up to."
+  };
+  var optionDefaultToBasic = {
+    message: "Default to basic mode"
+  };
+  var optionDefaultToBasicDesc = {
+    message: "Launch calculator in basic mode (no trignometric functions)."
+  };
+  var optionEnableMinimize = {
+    message: "Enable minimize"
+  };
+  var optionEnableMinimizeDesc = {
+    message: "Displays a control (in the header) for minimizing the calculator"
+  };
+  var optionEnableDarkMode = {
+    message: "Enable dark mode"
+  };
+  var optionEnableDarkModeDesc = {
+    message: "Give the interface a dark look."
+  };
+  var optionUseCommaForDecimals = {
+    message: "Use comma (,) for decimals"
+  };
+  var optionUseCommaForDecimalsDesc = {
+    message: "Display 20.000,00 instead of 20,000.00"
   };
   var messages_default = {
     appName,
     appShortName,
     appDesc,
-    calculator_cue
+    fdbkHowAreWeDoing,
+    fdbkCareToShare,
+    fdbkHowCanWeImprove,
+    fdbkThanks,
+    fdbkRateOnWebstore,
+    fdbkNoResponse,
+    fdbkSumbit,
+    reportAnIssue,
+    showDemo,
+    optionsSaveSuccess,
+    optionBlockedSites,
+    optionBlockedSitesDesc,
+    optionDefaultWidth,
+    optionDefaultWidthDesc,
+    optionDefaultHeight,
+    optionDefaultHeightDesc,
+    optionEnableFractions,
+    optionEnableFractionsDesc,
+    optionAnswerPrecision,
+    optionAnswerPrecisionDesc,
+    optionDefaultToBasic,
+    optionDefaultToBasicDesc,
+    optionEnableMinimize,
+    optionEnableMinimizeDesc,
+    optionEnableDarkMode,
+    optionEnableDarkModeDesc,
+    optionUseCommaForDecimals,
+    optionUseCommaForDecimalsDesc
   };
 
   // src/utils/i18n.ts
@@ -8064,6 +8323,8 @@ Url: ${_getEventFilterUrl(event)}`
     logger2.error("No translation available for key:", key);
     return key;
   };
+  var appName2 = i18n("appName");
+  var appDescription = i18n("appDesc");
 
   // src/utils/feedback/feedback.ts
   var FeedbackForm = class extends HTMLElement {
@@ -8088,6 +8349,15 @@ Url: ${_getEventFilterUrl(event)}`
     adoptedCallback() {
       this.logger.debug("Feedback form moved to new page.");
     }
+    setI18nText(elem) {
+      elem.querySelector("p[data-step='1']").innerHTML = i18n("fdbkHowAreWeDoing");
+      elem.querySelector("p[data-step='2']").innerHTML = i18n("fdbkCareToShare");
+      elem.querySelector("input[data-step='3']").setAttribute("placeholder", i18n("fdbkHowCanWeImprove"));
+      elem.querySelector("p[data-step='4']").innerHTML = i18n("fdbkThanks");
+      elem.querySelector("#rate-on-store").innerHTML = i18n("fdbkRateOnWebstore");
+      elem.querySelector("#decline-rate-on-store").innerHTML = i18n("fdbkNoResponse");
+      elem.querySelector("#submit-form").innerHTML = i18n("fdbkSumbit");
+    }
     updateStyle(elem) {
       const style = document.createElement("style");
       style.textContent = feedback_txt_default2;
@@ -8097,16 +8367,17 @@ Url: ${_getEventFilterUrl(event)}`
       const shadow = elem.shadowRoot;
       shadow.append(style, documentFragment);
       const size2 = elem.getAttribute("size") ?? "inline";
-      const app = elem.getAttribute("app-name") ?? i18n("appName");
+      const appName3 = elem.getAttribute("app-name") ?? i18n("appName");
       const logo = elem.getAttribute("logo-url") ?? chrome.runtime.getURL("assets/logo-24x24.png");
       const storeLink = elem.getAttribute("store-link") ?? "https://chrome.google.com/webstore/detail/" + i18n("@@extension_id");
       const formLink = elem.getAttribute("form-link") ?? "https://formspree.io/f/mayzdndj";
-      this.logger.debug(`Attributes: size=${size2}, app=${app}, logo=${logo}`);
+      this.logger.debug(`Attributes: size=${size2}, app=${appName3}, logo=${logo}`);
       const multiStepForm = shadow.querySelector("[data-multi-step]");
       multiStepForm.classList.remove("inline", "small", "medium");
       multiStepForm.classList.add(size2);
+      this.setI18nText(multiStepForm);
       multiStepForm.querySelector("img").src = logo;
-      multiStepForm.querySelector(".logo p").innerHTML = app;
+      multiStepForm.querySelector(".logo p").innerHTML = appName3;
       let currentStep = multiStepForm.getAttribute("data-current-step");
       if (!currentStep) {
         currentStep = 1;
@@ -8146,7 +8417,7 @@ Url: ${_getEventFilterUrl(event)}`
           }
           const data = {
             feedback: multiStepForm.querySelector("input").value,
-            appName: app
+            appName: appName3
           };
           if (button.id === "submit-form") {
             fetch(formLink, {
@@ -8170,43 +8441,6 @@ Url: ${_getEventFilterUrl(event)}`
     }
   };
   customElements.define("feedback-form", FeedbackForm);
-
-  // src/utils/storage.ts
-  var FEEDBACK_DATA_KEY = "feedback_data";
-  var Storage = class {
-    constructor() {
-      this.storageService = chrome?.storage?.sync ?? window.localStorage;
-    }
-    put(key, value) {
-      if (value === null || value === void 0) {
-        return Promise.reject("Attempting to save a null value");
-      }
-      if (!key) {
-        return Promise.reject("Attempting to use a null key");
-      }
-      if (!chrome?.storage?.sync) {
-        return this.storageService.setItem(key, JSON.stringify(value));
-      }
-      const data = {};
-      data[key] = value;
-      return this.storageService.set(data);
-    }
-    async get(key) {
-      if (!chrome?.storage?.sync) {
-        return JSON.parse(this.storageService.getItem(key));
-      }
-      const response = await this.storageService.get(key);
-      return response[key];
-    }
-    getAll() {
-      return this.storageService.get(null);
-    }
-    async getAndUpdate(key, updateFn) {
-      const data = await this.get(key);
-      return this.put(key, await updateFn(data));
-    }
-  };
-  var storage_default = new Storage();
 
   // src/utils/session-id.ts
   var SESSION_EXPIRATION_IN_MIN = 30;
@@ -8235,8 +8469,8 @@ Url: ${_getEventFilterUrl(event)}`
   // src/utils/analytics.ts
   var GA_ENDPOINT = "https://www.google-analytics.com/mp/collect";
   var GA_DEBUG_ENDPOINT = "https://www.google-analytics.com/debug/mp/collect";
-  var MEASUREMENT_ID = manifest_default.__measurement_id;
-  var API_SECRET = manifest_default.__ga_api_secret;
+  var MEASUREMENT_ID = measurementId;
+  var API_SECRET = gaApiSecret;
   var DEFAULT_ENGAGEMENT_TIME_MSEC = 100;
   var Analytics = class {
     constructor() {
@@ -8308,24 +8542,28 @@ Url: ${_getEventFilterUrl(event)}`
   };
   var analytics_default = new Analytics();
 
-  // src/content-script/previewr.ts
-  var iframeName = "essentialkit_calc_frame";
-  var getUrl = {
-    default: chrome?.runtime?.getURL,
-    demo: (path) => {
+  // src/utils/get-url.ts
+  var getURL = (path, mode) => {
+    if (!mode || mode === "default") {
+      return chrome?.runtime?.getURL(path);
+    }
+    if (mode === "demo") {
       if (window.location.protocol === "chrome-extension:") {
         return chrome.runtime.getURL(path);
       } else if (window.location.hostname === "127.0.0.1" || window.location.hostname === "essentialkit.org") {
-        return window.location.origin + "/assets/demos/floating-calculator/standalone/calc.html";
+        return window.location.origin + "/assets/demos/" + packageName + "/" + path;
       }
-      console.error("Invalid path");
-      return "";
     }
+    console.error("Invalid mode to getURL", path);
+    return "";
   };
-  var Previewr = class {
+
+  // src/content-script/winbox-renderer.ts
+  var WinboxRenderer = class {
     constructor() {
-      this.logger = new Logger("previewr");
+      this.logger = new Logger(this);
       this.mode = "default";
+      this.iframeName = "essentialkit_calc_frame";
       this.onEscHandler = (evt) => {
         evt = evt || window.event;
         var isEscape = false;
@@ -8338,7 +8576,7 @@ Url: ${_getEventFilterUrl(event)}`
           this.handleMessage({
             action: "escape",
             href: document.location.href,
-            sourceFrame: iframeName
+            sourceFrame: this.iframeName
           });
         }
       };
@@ -8356,7 +8594,7 @@ Url: ${_getEventFilterUrl(event)}`
     }
     listenForCspError() {
       document.addEventListener("securitypolicyviolation", (e) => {
-        if (window.name !== iframeName) {
+        if (window.name !== this.iframeName) {
           return;
         }
         this.logger.error("CSP error", e, e.blockedURI);
@@ -8371,7 +8609,7 @@ Url: ${_getEventFilterUrl(event)}`
       switch (message.action) {
         case "toggle-calculator":
           try {
-            let link = getUrl[this.mode]("standalone/calc.html");
+            let link = getURL("standalone/calc.html", this.mode);
             console.log("creatign url", link);
             let newUrl = new URL(link);
             if (newUrl.href === this.url?.href) {
@@ -8447,7 +8685,7 @@ Url: ${_getEventFilterUrl(event)}`
         pos = await this.getPos(point);
       }
       return {
-        icon: getUrl[this.mode]("assets/logo-24x24.png"),
+        icon: getURL("assets/logo-24x24.png", this.mode),
         x: pos.x,
         y: pos.y,
         width: "440px",
@@ -8455,10 +8693,10 @@ Url: ${_getEventFilterUrl(event)}`
         autosize: false,
         class: ["no-max", "no-full", "no-min", "no-move"],
         index: await this.getMaxZIndex(),
-        html: `<iframe name="${iframeName}" src="${url}"></iframe>`,
+        html: `<iframe name="${this.iframeName}" src="${url}"></iframe>`,
         hidden: true,
         shadowel: "floating-calculator-preview-window",
-        framename: iframeName,
+        framename: this.iframeName,
         onclose: () => {
           this.url = void 0;
           this.dialog = void 0;
@@ -8515,9 +8753,99 @@ Url: ${_getEventFilterUrl(event)}`
     }
   };
 
+  // src/content-script/content-script.ts
+  var ContentScript = class {
+    constructor() {
+      this.logger = new Logger("content-script");
+      this.winboxRenderer = new WinboxRenderer();
+    }
+    init() {
+      this.winboxRenderer.init();
+      this.trackMousePosition();
+      this.listenForBgMessage();
+    }
+    trackMousePosition() {
+      document.addEventListener("mousemove", (e) => {
+        const y = e.y < 20 ? 20 : e.y;
+        this.lastMousePosition = {
+          width: 10,
+          height: 10,
+          x: e.x,
+          y,
+          left: e.x,
+          top: y,
+          right: e.x + 10,
+          bottom: y + 10
+        };
+      });
+    }
+    listenForBgMessage() {
+      chrome?.runtime?.onMessage?.addListener((request, sender, callback) => {
+        if (typeof request === "string") {
+          return;
+        }
+        this.logger.debug("#onMessage: ", request);
+        if (!request.point) {
+          request.point = this.lastMousePosition;
+        }
+        if (request.action === "user-text-selection") {
+          window.getSelection()?.removeAllRanges();
+        }
+        this.handleMessage(request.action, request.data, request.point);
+        callback("ok");
+      });
+    }
+    listenForWindowMessages() {
+      window.addEventListener(
+        "message",
+        (event) => {
+          if (event.origin !== window.location.origin) {
+            this.logger.debug(
+              "Ignoring message from different origin",
+              event.origin,
+              event.data
+            );
+            return;
+          }
+          if (event.data.application !== packageName) {
+            this.logger.debug(
+              "Ignoring origin messsage not initiated by Floating Calculator"
+            );
+            return;
+          }
+          this.logger.log("#WindowMessage: ", event, "/ndata", event.data);
+          this.handleMessage(event.data);
+        },
+        false
+      );
+    }
+    handleMessage(action, data, point) {
+      const mssg = Object.assign(
+        { application: packageName, action, point },
+        data
+      );
+      this.winboxRenderer.handleMessage(mssg);
+    }
+    showDemo() {
+      this.logger.debug("#showDemo");
+      this.winboxRenderer.handleMessage({
+        application: packageName,
+        action: "toggle-calculator",
+        data: { mode: "demo" },
+        point: this.lastMousePosition
+      });
+    }
+  };
+  storage_default.isCurrentSiteBlocked().then((isBlocked) => {
+    const isTopFrame = window.self === window.top;
+    if (!isBlocked && isTopFrame) {
+      new ContentScript().init();
+    }
+  });
+
   // src/welcome/welcome.ts
-  var previewr = new Previewr();
-  previewr.init();
+  var contentScript = new ContentScript();
+  contentScript.init();
   window.addEventListener("load", (e) => {
     let lastMousePosition;
     document.addEventListener("mousemove", (e2) => {
@@ -8534,12 +8862,7 @@ Url: ${_getEventFilterUrl(event)}`
       };
     });
     document.querySelector("#demo-button")?.addEventListener("click", (e2) => {
-      previewr.handleMessage({
-        application: "floating-calculator",
-        action: "toggle-calculator",
-        data: { mode: "demo" },
-        point: lastMousePosition
-      });
+      contentScript.showDemo();
     });
   });
 })();
